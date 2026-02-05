@@ -493,9 +493,6 @@ if TD_NotifyWindow then
     local method = TD_NotifyWindow:get_method("requestNotifyWindow")
     if method then
         sdk.hook(method, function(args)
-            if not RerollTracker.enabled then
-                return
-            end
             local success, result = pcall(function()
                 local notifyWindowInfo = sdk.to_managed_object(args[3])
                 if not notifyWindowInfo then return end
@@ -503,10 +500,12 @@ if TD_NotifyWindow then
                 if not textInfo then return end
                 local windowId = notifyWindowInfo:get_NotifyWindowId()
                 if not windowId then return end
-                local windowIdName = notifyWindowID2Name[windowId]
-                if not windowIdName then return end
+                local windowIdName = notifyWindowID2Name[windowId] or string.format("UNKNOWN_%d", windowId)
+                log.info(string.format("[Dialog] ID=%d, Name=%s", windowId, windowIdName))
+                if not RerollTracker.enabled then return end
                 local targetDialogs = {
                     ["EQUIP_000"] = 0,
+                    ["EQUIPMENT_0008_15"] = 0,
                     ["GUI080301_0005_DLG"] = 0,
                     ["GUI080301_0009_DLG"] = 1,
                     ["GUI080301_0010_DLG"] = 1,
@@ -530,6 +529,36 @@ if TD_NotifyWindow then
         log.info("[RerollTracker] Dialog skip hook installed")
     end
 end
+
+RerollTracker._inGrindCore = false
+RerollTracker._grindCoreTime = 0
+
+local TD_GUI000019 = sdk.find_type_definition("app.GUI000019")
+
+if TD_GUI000019 then
+    local grindCoreMethod = TD_GUI000019:get_method("grindCore()")
+    if grindCoreMethod then
+        sdk.hook(grindCoreMethod, function(args)
+            if RerollTracker.enabled then
+                RerollTracker._inGrindCore = true
+                RerollTracker._grindCoreTime = os.clock()
+            end
+        end, nil)
+        log.info("[RerollTracker] grindCore hook installed")
+    end
+
+    local executeMethod = TD_GUI000019:get_method("execute()")
+    if executeMethod then
+        sdk.hook(executeMethod, function(args)
+            if RerollTracker.enabled then
+                RerollTracker._inGrindCore = true
+                RerollTracker._grindCoreTime = os.clock()
+            end
+        end, nil)
+        log.info("[RerollTracker] execute hook installed")
+    end
+end
+
 
 RerollTracker.load_from_json()
 
