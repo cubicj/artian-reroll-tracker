@@ -1,62 +1,37 @@
-local log = log
-local sdk = sdk
-local json = json
-local imgui = imgui
-local re = re
-local os = os
-
 local RerollTracker = {}
 
-local TD_SaveDataManager = sdk.find_type_definition("app.SaveDataManager")
-local TD_ArtianUtil = sdk.find_type_definition("app.ArtianUtil")
-local TD_GuiMessage = sdk.find_type_definition("via.gui.message")
-local TD_EquipWork = sdk.find_type_definition("app.savedata.cEquipWork")
-local TD_VariousDataManager = sdk.find_type_definition("app.VariousDataManager")
-local TD_MessageUtil = sdk.find_type_definition("app.MessageUtil")
-
-local FN_GetCurrentUserSaveData = TD_SaveDataManager:get_method("getCurrentUserSaveData()")
-local FN_GetBonusIdList = TD_ArtianUtil:get_method("getBonusIdList(app.savedata.cEquipWork)")
-local FN_GetBonusName = TD_ArtianUtil:get_method("Name(app.ArtianDef.BONUS_ID)")
-local FN_GetLocalizedMsg = TD_GuiMessage:get_method("get(System.Guid)")
-local FN_GetPerformanceType = TD_ArtianUtil:get_method("getPerformanceType(app.savedata.cEquipWork)")
-local FN_GetSkillName = TD_MessageUtil and TD_MessageUtil:get_method("getHunterSkillName(app.HunterDef.Skill)") or nil
-
-RerollTracker.SaveData = nil
-RerollTracker.EquipBox = nil
-
-RerollTracker.isMonitoring = false
+RerollTracker.enabled = false
 RerollTracker.currentSession = nil
 RerollTracker.weapons = {}
-
+RerollTracker.attemptCount = 0
 RerollTracker.dataFilePath = "reroll_sessions.json"
-RerollTracker.enableAutoSkip = false
-
-RerollTracker.trackingMode = 1
-RerollTracker.MODE_GRINDING = 1
-RerollTracker.MODE_LOTTERY = 2
-RerollTracker.modeNames = {"Artian Grinding (거극 복원 강화)", "Skill Lottery (스킬 재부여)"}
-
-RerollTracker.skillDataInitialized = false
-RerollTracker.aSkillTypeToSkillData = {}
-
-RerollTracker.pendingRecords = {}
-RerollTracker.trackedWeaponIndex = nil
 
 RerollTracker.elementList = {"화속", "수속", "얼음", "번개", "용속", "폭파", "마비"}
 RerollTracker.weaponTypeList = {"대검", "태도", "손검", "쌍검", "해머", "피리", "랜스", "건랜", "슬액", "차액", "충곤", "라보", "헤보", "활"}
 RerollTracker.selectedElement = 1
 RerollTracker.selectedWeaponType = 1
+RerollTracker.trackingMode = 1
+RerollTracker.MODE_GRINDING = 1
+RerollTracker.MODE_LOTTERY = 2
+RerollTracker.modeLabels = {"Grinding (복원 강화)", "Lottery (스킬 재부여)"}
+
+local TD_ArtianUtil = sdk.find_type_definition("app.ArtianUtil")
+local TD_Em0078ArtianUtil = sdk.find_type_definition("app.Em0078_ArtianUtil")
+local TD_GuiMessage = sdk.find_type_definition("via.gui.message")
 local TD_GUI080000ArtianStatus = sdk.find_type_definition("app.GUI080000ArtianStatus")
 local TD_LoopGaugeChangeRequirePoint = sdk.find_type_definition("app.cGUILoopGaugeChangeRequirePoint")
 local TD_NotifyWindow = sdk.find_type_definition("app.cGUISystemModuleNotifyWindowApp")
 local TD_NotifyWindowDef = sdk.find_type_definition("app.GUINotifyWindowDef.ID")
 
+local FN_GetBonusName = TD_ArtianUtil and TD_ArtianUtil:get_method("Name(app.ArtianDef.BONUS_ID)")
+local FN_GetLocalizedMsg = TD_GuiMessage and TD_GuiMessage:get_method("get(System.Guid)")
+local FN_LotterySkill = TD_Em0078ArtianUtil and TD_Em0078ArtianUtil:get_method("lotterySkill(app.savedata.cEquipWork)")
+
 local function getEnumTables(typeDef)
     local byName, byValue = {}, {}
     if not typeDef then return byName, byValue end
-
     local fields = typeDef:get_fields()
-    for i, field in ipairs(fields) do
+    for _, field in ipairs(fields) do
         if field:is_static() then
             local name, value = field:get_name(), field:get_data()
             byName[name] = value
@@ -68,834 +43,460 @@ end
 
 local notifyWindowName2ID, notifyWindowID2Name = getEnumTables(TD_NotifyWindowDef)
 
-function RerollTracker.init_skill_data()
-    if RerollTracker.skillDataInitialized then return end
+local function get_bonus_name(bonusId)
+    if not FN_GetBonusName or not FN_GetLocalizedMsg then
+        return string.format("Bonus_%d", bonusId)
+    end
+    local success, result = pcall(function()
+        local guidObj = FN_GetBonusName:call(nil, bonusId)
+        if not guidObj then return string.format("Bonus_%d", bonusId) end
+        local text = FN_GetLocalizedMsg:call(nil, guidObj)
+        if text and text ~= "" then return text end
+        return string.format("Bonus_%d", bonusId)
+    end)
+    if success then return result end
+    return string.format("Bonus_%d", bonusId)
+end
 
+local ArtianSkillData = nil
+local ArtianSkillDataInited = false
+
+local function init_artian_skill_data()
+    if ArtianSkillDataInited then return end
     local success, err = pcall(function()
         local mgr = sdk.get_managed_singleton("app.VariousDataManager")
-        if not mgr then
-            log.error("[RerollTracker] VariousDataManager not found")
-            return
-        end
-
+        if not mgr then return end
         local skillGroup = mgr._Setting._EquipDatas._ArtianDataSetting._ArtianSkillGroup._Values
-        if not skillGroup then
-            log.error("[RerollTracker] ArtianSkillGroup not found")
-            return
-        end
-
-        for i = 0, skillGroup:get_Count() - 1 do
-            local data = skillGroup:get_Item(i)
+        if not skillGroup then return end
+        ArtianSkillData = {}
+        local count = skillGroup:call("get_Count")
+        for i = 0, count - 1 do
+            local data = skillGroup:call("get_Item", i)
             if data then
-                local aSkillType = data:get_ArtianSkillType()
-                local seriesId = data:get_SeriesSkillId()
-                local groupId = data:get_GroupSkillId()
-
-                RerollTracker.aSkillTypeToSkillData[aSkillType] = {
-                    Series = seriesId,
-                    Group = groupId
+                local aSkillType = data:call("get_ArtianSkillType")
+                local seriesId = data:call("get_SeriesSkillId")
+                local groupId = data:call("get_GroupSkillId")
+                ArtianSkillData[aSkillType] = {
+                    seriesId = seriesId,
+                    groupId = groupId
                 }
             end
         end
-
-        RerollTracker.skillDataInitialized = true
-        log.info(string.format("[RerollTracker] Skill data initialized (%d entries)", table_count(RerollTracker.aSkillTypeToSkillData)))
+        ArtianSkillDataInited = true
+        log.info("[RerollTracker] ArtianSkillData initialized")
     end)
-
     if not success then
-        log.error("[RerollTracker] Failed to init skill data: " .. tostring(err))
+        log.error("[RerollTracker] init_artian_skill_data error: " .. tostring(err))
     end
 end
 
-function table_count(t)
-    local count = 0
-    for _ in pairs(t) do count = count + 1 end
-    return count
+local TD_MessageUtil = sdk.find_type_definition("app.MessageUtil")
+local FN_GetSkillName = TD_MessageUtil and TD_MessageUtil:get_method("getHunterSkillName(app.HunterDef.Skill)")
+
+local function get_skill_name(skillId)
+    if not skillId or skillId <= 0 then return "" end
+    local success, result = pcall(function()
+        if FN_GetSkillName and FN_GetLocalizedMsg then
+            local guidObj = FN_GetSkillName:call(nil, skillId)
+            if guidObj then
+                local name = FN_GetLocalizedMsg:call(nil, guidObj)
+                if name and name ~= "" then return name end
+            end
+        end
+        return string.format("Skill_%d", skillId)
+    end)
+    if success then return result end
+    return string.format("Skill_%d", skillId)
 end
 
-function RerollTracker.decode_bonus_by_creating(bonusValue)
-    if bonusValue <= 0 then return 0 end
-
-    local first = bonusValue % 1000
-    local second = math.floor(bonusValue / 1000) % 1000
-    local third = math.floor(bonusValue / 1000000) % 1000
-
+local function decode_artian_skill_type(bonusByCreating)
+    local first = bonusByCreating % 1000
+    local second = math.floor(bonusByCreating / 1000) % 1000
+    local third = math.floor(bonusByCreating / 1000000) % 1000
     local asFirst = math.floor(first / 10) % 10
     local asSecond = math.floor(second / 10) % 10
     local asThird = math.floor(third / 10) % 10
-
-    local aSkillType = asThird * 100 + asSecond * 10 + asFirst
-
-    return aSkillType
+    return asThird * 100 + asSecond * 10 + asFirst
 end
 
-function RerollTracker.get_skill_name(skillId)
-    if not FN_GetSkillName then
-        return string.format("Skill_%d", skillId)
+local function get_skill_names_from_artian_type(aSkillType)
+    init_artian_skill_data()
+    if not ArtianSkillData or not ArtianSkillData[aSkillType] then
+        return string.format("ArtianSkill_%d", aSkillType), ""
     end
-
-    local success, result = pcall(function()
-        local guidObj = FN_GetSkillName:call(nil, skillId)
-        if not guidObj then
-            return string.format("Skill_%d", skillId)
-        end
-
-        local localizedText = FN_GetLocalizedMsg:call(nil, guidObj)
-        if not localizedText or localizedText == "" then
-            return string.format("Skill_%d", skillId)
-        end
-
-        return localizedText
-    end)
-
-    if success then
-        return result
-    else
-        log.error(string.format("[RerollTracker] get_skill_name error for skill %d: %s", skillId, tostring(result)))
-        return string.format("Skill_%d", skillId)
-    end
-end
-
-function RerollTracker.get_bonus_name(bonusId)
-    local success, result = pcall(function()
-        local guidObj = FN_GetBonusName:call(nil, bonusId)
-        if not guidObj then return "Unknown" end
-
-        local localizedText = FN_GetLocalizedMsg:call(nil, guidObj)
-        if localizedText and localizedText ~= "" then
-            return localizedText
-        end
-        return "Unknown"
-    end)
-
-    if success then
-        return result
-    else
-        log.error("[RerollTracker] get_bonus_name failed: " .. tostring(result))
-        return "Error"
-    end
-end
-
-function RerollTracker.get_bonus_list_from_equipment(equipItem)
-    local success, result = pcall(function()
-        if not equipItem then return nil end
-
-        local bonusList = FN_GetBonusIdList:call(nil, equipItem)
-        if not bonusList then return nil end
-
-        local ids = {}
-        for i = 0, bonusList:get_Count() - 1 do
-            ids[i + 1] = bonusList:get_Item(i)
-        end
-        return ids
-    end)
-
-    if success then
-        return result
-    else
-        log.error("[RerollTracker] get_bonus_list_from_equipment failed: " .. tostring(result))
-        return nil
-    end
-end
-
-
-function RerollTracker.find_target_weapon()
-    if not RerollTracker.EquipBox then return nil, nil end
-
-    if RerollTracker.trackedWeaponIndex then
-        local equipItem = RerollTracker.EquipBox:get_Item(RerollTracker.trackedWeaponIndex)
-        if equipItem then
-            return RerollTracker.trackedWeaponIndex, equipItem
-        end
-    end
-
-    for i = 0, RerollTracker.EquipBox:get_Count() - 1 do
-        local equipItem = RerollTracker.EquipBox:get_Item(i)
-        if equipItem then
-            local category = equipItem:get_Category()
-            local bonusByCreating = equipItem.BonusByCreating
-
-            if category == 1 and bonusByCreating > 0 then
-                RerollTracker.trackedWeaponIndex = i
-                log.info(string.format("[RerollTracker] Found artian weapon at index %d", i))
-                return i, equipItem
-            end
-        end
-    end
-
-    log.warn("[RerollTracker] find_target_weapon: No artian weapon found")
-    return nil, nil
-end
-
-function RerollTracker.queue_record()
-    local attemptNum = RerollTracker.dialogSkipCount or 1
-    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-    table.insert(RerollTracker.pendingRecords, {
-        attemptNum = attemptNum,
-        timestamp = timestamp,
-        retryCount = 0,
-        delayFrames = 10
-    })
-    log.info(string.format("[RerollTracker] Queued record #%d (queue size: %d)", attemptNum, #RerollTracker.pendingRecords))
-end
-
-function RerollTracker.record_immediate()
-    if not RerollTracker.SaveData or not RerollTracker.EquipBox then
-        log.warn("[RerollTracker] record_immediate: SaveData not ready")
-        return
-    end
-
-    local attemptNum = RerollTracker.dialogSkipCount or 1
-    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-
-    local success, err = pcall(function()
-        local idx, equipItem = RerollTracker.find_target_weapon()
-        if idx and equipItem then
-            local recorded = RerollTracker.record_attempt(idx, equipItem, attemptNum, timestamp)
-            if recorded then
-                log.info(string.format("[RerollTracker] Immediate record #%d SUCCESS", attemptNum))
-            else
-                log.warn(string.format("[RerollTracker] Immediate record #%d FAILED - queuing", attemptNum))
-                table.insert(RerollTracker.pendingRecords, {
-                    attemptNum = attemptNum,
-                    timestamp = timestamp,
-                    retryCount = 0,
-                    delayFrames = 5
-                })
-            end
-        else
-            log.warn(string.format("[RerollTracker] Immediate record #%d - weapon not found, queuing", attemptNum))
-            table.insert(RerollTracker.pendingRecords, {
-                attemptNum = attemptNum,
-                timestamp = timestamp,
-                retryCount = 0,
-                delayFrames = 5
-            })
-        end
-    end)
-
-    if not success then
-        log.error("[RerollTracker] record_immediate failed: " .. tostring(err))
-    end
-end
-
-function RerollTracker.process_pending_records()
-    if not RerollTracker.SaveData or not RerollTracker.EquipBox then
-        return
-    end
-
-    if #RerollTracker.pendingRecords == 0 then
-        return
-    end
-
-    local pending = RerollTracker.pendingRecords[1]
-
-    if pending.delayFrames and pending.delayFrames > 0 then
-        pending.delayFrames = pending.delayFrames - 1
-        return
-    end
-
-    pending.retryCount = pending.retryCount + 1
-
-    local success, err = pcall(function()
-        local idx, equipItem = RerollTracker.find_target_weapon()
-        if idx and equipItem then
-            local recorded = RerollTracker.record_attempt(idx, equipItem, pending.attemptNum, pending.timestamp)
-            if recorded then
-                log.info(string.format("[RerollTracker] Processed pending #%d (remaining: %d)", pending.attemptNum, #RerollTracker.pendingRecords - 1))
-                table.remove(RerollTracker.pendingRecords, 1)
-            elseif pending.retryCount > 60 then
-                log.warn(string.format("[RerollTracker] Failed to record attempt #%d after 60 retries, skipping", pending.attemptNum))
-                table.remove(RerollTracker.pendingRecords, 1)
-            end
-        elseif pending.retryCount > 60 then
-            log.warn(string.format("[RerollTracker] Failed to find weapon for attempt #%d after 60 retries, skipping", pending.attemptNum))
-            table.remove(RerollTracker.pendingRecords, 1)
-        end
-    end)
-
-    if not success then
-        log.error("[RerollTracker] process_pending_records failed: " .. tostring(err))
-        if pending.retryCount > 60 then
-            table.remove(RerollTracker.pendingRecords, 1)
-        end
-    end
-end
-
-function RerollTracker.record_attempt(index, equipItem, attemptNum, timestamp)
-    if not RerollTracker.currentSession then
-        log.warn(string.format("[RerollTracker] record_attempt #%d FAILED: currentSession is nil", attemptNum))
-        return false
-    end
-
-    local recorded = false
-    local success, err = pcall(function()
-        local weaponIndex = index
-
-        local attemptRecord = {
-            attemptNum = attemptNum,
-            weaponIndex = weaponIndex,
-            timestamp = timestamp or os.date("%Y-%m-%d %H:%M:%S")
-        }
-
-        if RerollTracker.trackingMode == RerollTracker.MODE_GRINDING then
-            local gameUIBonuses = {}
-
-            if RerollTracker.lastGrindingBonusList and #RerollTracker.lastGrindingBonusList > 0 then
-                gameUIBonuses = RerollTracker.lastGrindingBonusList
-            else
-                local bonusIds = RerollTracker.get_bonus_list_from_equipment(equipItem)
-                if bonusIds and #bonusIds >= 8 then
-                    for i = 4, 8 do
-                        local bonusId = bonusIds[i]
-                        local bonusName = RerollTracker.get_bonus_name(bonusId)
-                        table.insert(gameUIBonuses, bonusName)
-                    end
-                else
-                    for i = 1, 5 do
-                        table.insert(gameUIBonuses, "Unknown")
-                    end
-                    log.warn(string.format("[RerollTracker] Invalid bonus list for attempt #%d, recorded as Unknown", attemptNum))
-                end
-            end
-
-            attemptRecord.bonuses = gameUIBonuses
-
-            local nickname = RerollTracker.currentSession.nickname or "Unknown"
-            log.info(string.format("[RerollTracker] === [%s] GRINDING ATTEMPT #%d ===", nickname, attemptNum))
-            log.info(string.format("[RerollTracker] Bonuses: [%s]", table.concat(gameUIBonuses, ", ")))
-
-        elseif RerollTracker.trackingMode == RerollTracker.MODE_LOTTERY then
-            if not RerollTracker.skillDataInitialized then
-                RerollTracker.init_skill_data()
-            end
-
-            local bonusByCreating = equipItem.BonusByCreating
-            local aSkillType = RerollTracker.decode_bonus_by_creating(bonusByCreating)
-            local skillData = RerollTracker.aSkillTypeToSkillData[aSkillType]
-
-            if skillData then
-                local seriesName = RerollTracker.get_skill_name(skillData.Series)
-                local groupName = RerollTracker.get_skill_name(skillData.Group)
-
-                attemptRecord.skills = {
-                    series = seriesName,
-                    group = groupName
-                }
-
-                local nickname = RerollTracker.currentSession.nickname or "Unknown"
-                log.info(string.format("[RerollTracker] === [%s] LOTTERY ATTEMPT #%d ===", nickname, attemptNum))
-                log.info(string.format("[RerollTracker] BonusByCreating: %d → aSkillType: %d", bonusByCreating, aSkillType))
-                log.info(string.format("[RerollTracker] Series: %s | Group: %s", seriesName, groupName))
-            else
-                attemptRecord.skills = {
-                    series = string.format("Unknown_%d", aSkillType),
-                    group = string.format("Unknown_%d", aSkillType)
-                }
-
-                local nickname = RerollTracker.currentSession.nickname or "Unknown"
-                log.info(string.format("[RerollTracker] === [%s] LOTTERY ATTEMPT #%d ===", nickname, attemptNum))
-                log.info(string.format("[RerollTracker] BonusByCreating: %d → aSkillType: %d (unknown mapping)", bonusByCreating, aSkillType))
-            end
-        end
-
-        if not RerollTracker.currentSession.weaponIndex then
-            RerollTracker.currentSession.weaponIndex = weaponIndex
-        end
-
-        table.insert(RerollTracker.currentSession.attempts, attemptRecord)
-        RerollTracker.save_session_to_json()
-        recorded = true
-    end)
-
-    if not success then
-        log.error("[RerollTracker] record_attempt failed: " .. tostring(err))
-    end
-
-    return recorded
+    local data = ArtianSkillData[aSkillType]
+    local seriesName = get_skill_name(data.seriesId)
+    local groupName = get_skill_name(data.groupId)
+    return seriesName, groupName
 end
 
 local function finish_current_session()
-    if not RerollTracker.currentSession then return end
-
+    if not RerollTracker.currentSession then return nil, 0 end
     RerollTracker.currentSession.endTime = os.date("%Y-%m-%d %H:%M:%S")
     RerollTracker.currentSession.totalAttempts = #RerollTracker.currentSession.attempts
     table.insert(RerollTracker.weapons, RerollTracker.currentSession)
-
-    local nickname = RerollTracker.currentSession.nickname or "Unknown"
-    local totalAttempts = RerollTracker.currentSession.totalAttempts
-
+    local nickname = RerollTracker.currentSession.nickname
+    local total = RerollTracker.currentSession.totalAttempts
     RerollTracker.currentSession = nil
-    RerollTracker.save_session_to_json()
-
-    return nickname, totalAttempts
+    RerollTracker.attemptCount = 0
+    RerollTracker.save_to_json()
+    return nickname, total
 end
 
-function RerollTracker.start_monitoring()
-    if RerollTracker.isMonitoring and RerollTracker.currentSession then
-        local nickname, attempts = finish_current_session()
-        log.info(string.format("[RerollTracker] Previous session saved: %s (%d attempts)", nickname, attempts))
+local function start_new_session()
+    if RerollTracker.currentSession then
+        finish_current_session()
     end
-
-    if not RerollTracker.SaveData or not RerollTracker.EquipBox then
-        log.error("[RerollTracker] SaveData not initialized")
-        return
-    end
-
     local element = RerollTracker.elementList[RerollTracker.selectedElement]
     local weaponType = RerollTracker.weaponTypeList[RerollTracker.selectedWeaponType]
-
-    if not element or not weaponType then
-        log.error("[RerollTracker] Invalid element or weapon type selection")
-        return
-    end
-
-    RerollTracker.isMonitoring = true
-    RerollTracker.dialogSkipCount = 0
-    RerollTracker.pendingRecords = {}
-    RerollTracker.trackedWeaponIndex = nil
-
-    local modeLabel = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
+    local modeName = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
     local nickname = element .. " " .. weaponType
-
     RerollTracker.currentSession = {
         nickname = nickname,
         element = element,
         weaponType = weaponType,
-        mode = modeLabel,
+        mode = modeName,
         startTime = os.date("%Y-%m-%d %H:%M:%S"),
         attempts = {}
     }
-
-    log.info(string.format("[RerollTracker] Monitoring started for %s [Mode: %s]", nickname, modeLabel))
+    RerollTracker.attemptCount = 0
+    log.info(string.format("[RerollTracker] Session started: %s (%s)", nickname, modeName))
 end
 
-function RerollTracker.stop_monitoring()
-    if not RerollTracker.isMonitoring then
-        log.info("[RerollTracker] Not monitoring")
-        return
+local function record_attempt(bonusIds)
+    if not RerollTracker.enabled or not RerollTracker.currentSession then return end
+    if #bonusIds == 0 then return end
+    RerollTracker.attemptCount = RerollTracker.attemptCount + 1
+    local bonusNames = {}
+    for _, id in ipairs(bonusIds) do
+        table.insert(bonusNames, get_bonus_name(id))
     end
-
-    while #RerollTracker.pendingRecords > 0 do
-        local pending = RerollTracker.pendingRecords[1]
-        pending.retryCount = (pending.retryCount or 0) + 1
-
-        local idx, equipItem = RerollTracker.find_target_weapon()
-        if idx and equipItem then
-            local recorded = RerollTracker.record_attempt(idx, equipItem, pending.attemptNum, pending.timestamp)
-            if recorded then
-                table.remove(RerollTracker.pendingRecords, 1)
-            elseif pending.retryCount > 10 then
-                log.warn(string.format("[RerollTracker] Failed to record attempt #%d on stop, skipping", pending.attemptNum))
-                table.remove(RerollTracker.pendingRecords, 1)
-            else
-                break
-            end
-        else
-            log.warn(string.format("[RerollTracker] Target weapon not found for attempt #%d on stop", pending.attemptNum))
-            table.remove(RerollTracker.pendingRecords, 1)
-        end
-    end
-
-    RerollTracker.isMonitoring = false
-    RerollTracker.pendingRecords = {}
-
-    local nickname, attempts = finish_current_session()
-    if nickname then
-        log.info(string.format("[RerollTracker] Monitoring stopped [%s]. Total attempts: %d", nickname, attempts))
-    end
+    local attempt = {
+        attemptNum = RerollTracker.attemptCount,
+        timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+        bonuses = bonusNames
+    }
+    table.insert(RerollTracker.currentSession.attempts, attempt)
+    log.info(string.format("[RerollTracker] #%d: [%s]", RerollTracker.attemptCount, table.concat(bonusNames, ", ")))
+    RerollTracker.save_to_json()
 end
 
-function RerollTracker.save_session_to_json()
+local function record_skill_attempt(seriesSkill, groupSkill)
+    if not RerollTracker.enabled or not RerollTracker.currentSession then return end
+    if not seriesSkill or seriesSkill == "" then return end
+    RerollTracker.attemptCount = RerollTracker.attemptCount + 1
+    local attempt = {
+        attemptNum = RerollTracker.attemptCount,
+        timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+        skills = {
+            series = seriesSkill,
+            group = groupSkill or ""
+        }
+    }
+    table.insert(RerollTracker.currentSession.attempts, attempt)
+    log.info(string.format("[RerollTracker] #%d: [%s / %s]", RerollTracker.attemptCount, seriesSkill, groupSkill or ""))
+    RerollTracker.save_to_json()
+end
+
+function RerollTracker.save_to_json()
     local success, err = pcall(function()
         local data = {
             lastUpdated = os.date("%Y-%m-%d %H:%M:%S"),
             totalWeapons = #RerollTracker.weapons,
             weapons = RerollTracker.weapons
         }
-
+        if RerollTracker.currentSession then
+            data.currentSession = RerollTracker.currentSession
+        end
         json.dump_file(RerollTracker.dataFilePath, data)
     end)
-
     if not success then
-        log.error("[RerollTracker] Failed to save JSON: " .. tostring(err))
+        log.error("[RerollTracker] JSON save failed: " .. tostring(err))
     end
 end
 
-function RerollTracker.load_session_from_json()
+function RerollTracker.load_from_json()
     local success, data = pcall(function()
         return json.load_file(RerollTracker.dataFilePath)
     end)
-
     if success and data then
         RerollTracker.weapons = data.weapons or {}
-        log.info(string.format("[RerollTracker] Loaded %d weapons from JSON", #RerollTracker.weapons))
+        log.info(string.format("[RerollTracker] Loaded %d weapons", #RerollTracker.weapons))
     end
 end
 
 function RerollTracker.clear_history()
     RerollTracker.weapons = {}
     RerollTracker.currentSession = nil
-    RerollTracker.save_session_to_json()
+    RerollTracker.attemptCount = 0
+    RerollTracker.save_to_json()
     log.info("[RerollTracker] History cleared")
 end
 
-function RerollTracker.show_session_summary()
-    if not RerollTracker.currentSession then
-        log.info("[RerollTracker] No active session")
-        return
-    end
+RerollTracker._lastCapturedBonusIds = nil
+RerollTracker._lastCapturedSkillType = nil
 
-    log.info("[RerollTracker] === SESSION SUMMARY ===")
-    log.info(string.format("[RerollTracker] Weapon Nickname: %s", RerollTracker.currentSession.nickname or "N/A"))
-    log.info(string.format("[RerollTracker] Mode: %s", RerollTracker.currentSession.mode or "N/A"))
-    log.info(string.format("[RerollTracker] Start time: %s", RerollTracker.currentSession.startTime))
-    log.info(string.format("[RerollTracker] Weapon Index: %s", tostring(RerollTracker.currentSession.weaponIndex or "N/A")))
-    log.info(string.format("[RerollTracker] Total attempts: %d", #RerollTracker.currentSession.attempts))
-end
-
-local function create_animation_skip_hook(method, actionArgIndex, hookName)
-    if not method then return end
-
-    sdk.hook(method, function(args)
-        if not RerollTracker.enableAutoSkip then
-            return sdk.PreHookResult.CALL_ORIGINAL
-        end
-
-        local success, err = pcall(function()
-            local action = sdk.to_managed_object(args[actionArgIndex])
-            if action then
-                action:Invoke()
-            end
-        end)
-
-        if not success then
-            log.error(string.format("[RerollTracker] %s hook failed: %s", hookName, tostring(err)))
-            return sdk.PreHookResult.CALL_ORIGINAL
-        end
-
-        return sdk.PreHookResult.SKIP_ORIGINAL
-    end, nil)
-
-    log.info(string.format("[RerollTracker] %s hook installed", hookName))
-end
-
-RerollTracker.lastGrindingBonusList = nil
-
-local function create_grinding_anim_hook()
-    local method = TD_GUI080000ArtianStatus:get_method("startArtianGrindingAnim(System.Action)")
-    if not method then return end
-
-    sdk.hook(method, function(args)
-        if not RerollTracker.enableAutoSkip then
-            return sdk.PreHookResult.CALL_ORIGINAL
-        end
-
-        local success, err = pcall(function()
-            local this = sdk.to_managed_object(args[2])
-            local action = sdk.to_managed_object(args[3])
-
-            if action then
-                action:Invoke()
-            end
-
-            if RerollTracker.isMonitoring and RerollTracker.trackingMode == RerollTracker.MODE_GRINDING then
-                RerollTracker.dialogSkipCount = (RerollTracker.dialogSkipCount or 0) + 1
-                local attemptNum = RerollTracker.dialogSkipCount
-
-                if not this then
-                    log.warn(string.format("[RerollTracker] #%d: this is nil", attemptNum))
-                else
-                    local grindingList = this:get_field("_ArtianGrindingList")
-                    if not grindingList then
-                        log.warn(string.format("[RerollTracker] #%d: _ArtianGrindingList is nil", attemptNum))
-                    else
-                        local itemCount = grindingList:call("get_ItemCount")
-                        if itemCount and itemCount > 0 then
-                            local bonusNames = {}
-                            for i = 0, itemCount - 1 do
-                                local item = grindingList:call("getItemByGlobalIndex", i)
-                                if item then
-                                    local td = item:get_type_definition()
-                                    if attemptNum == 1 then
-                                        log.info(string.format("[RerollTracker] Item[%d] type: %s", i, td and td:get_full_name() or "nil"))
-                                    end
-                                    local bonusId = item:get_field("_BonusId_k__BackingField")
-                                    if not bonusId then
-                                        bonusId = item:call("get_BonusId")
-                                    end
-                                    if bonusId then
-                                        local bonusName = RerollTracker.get_bonus_name(bonusId)
-                                        table.insert(bonusNames, bonusName)
-                                    end
-                                end
-                            end
-                            if #bonusNames > 0 then
-                                RerollTracker.lastGrindingBonusList = bonusNames
-                                log.info(string.format("[RerollTracker] [GRINDING] #%d captured: [%s]", attemptNum, table.concat(bonusNames, ", ")))
-                            else
-                                log.warn(string.format("[RerollTracker] #%d: ItemCount=%d but no bonuses read", attemptNum, itemCount))
-                            end
-                        else
-                            log.warn(string.format("[RerollTracker] #%d: ItemCount=%s", attemptNum, tostring(itemCount)))
+if FN_LotterySkill then
+    sdk.hook(FN_LotterySkill,
+        function(args)
+            RerollTracker._lotterySkillEquipWork = args[2]
+        end,
+        function(retval)
+            if not RerollTracker.enabled then return retval end
+            if RerollTracker.trackingMode ~= RerollTracker.MODE_LOTTERY then return retval end
+            local success, err = pcall(function()
+                local equipWork = sdk.to_managed_object(RerollTracker._lotterySkillEquipWork)
+                if equipWork then
+                    local bonusByCreating = equipWork:get_field("BonusByCreating")
+                    if bonusByCreating and bonusByCreating > 0 then
+                        local aSkillType = decode_artian_skill_type(bonusByCreating)
+                        if aSkillType and aSkillType > 0 then
+                            RerollTracker._lastCapturedSkillType = aSkillType
+                            log.info(string.format("[RerollTracker] Captured ArtianSkillType: %d", aSkillType))
                         end
                     end
                 end
+            end)
+            if not success then
+                log.error("[RerollTracker] lotterySkill hook error: " .. tostring(err))
             end
-        end)
-
-        if not success then
-            log.error(string.format("[RerollTracker] startArtianGrindingAnim hook failed: %s", tostring(err)))
-            return sdk.PreHookResult.CALL_ORIGINAL
+            return retval
         end
-
-        return sdk.PreHookResult.SKIP_ORIGINAL
-    end, nil)
-
-    log.info("[RerollTracker] startArtianGrindingAnim hook installed (with recording)")
-end
-
-local function create_lottery_anim_hook()
-    local method = TD_GUI080000ArtianStatus:get_method("startSkillLotteryAnim(System.Action)")
-    if not method then return end
-
-    sdk.hook(method, function(args)
-        if not RerollTracker.enableAutoSkip then
-            return sdk.PreHookResult.CALL_ORIGINAL
-        end
-
-        local success, err = pcall(function()
-            local action = sdk.to_managed_object(args[3])
-            if action then
-                action:Invoke()
-            end
-
-        end)
-
-        if not success then
-            log.error(string.format("[RerollTracker] startSkillLotteryAnim hook failed: %s", tostring(err)))
-            return sdk.PreHookResult.CALL_ORIGINAL
-        end
-
-        return sdk.PreHookResult.SKIP_ORIGINAL
-    end, nil)
-
-    log.info("[RerollTracker] startSkillLotteryAnim hook installed (with recording)")
+    )
+    log.info("[RerollTracker] lotterySkill hook installed")
 end
 
 if TD_GUI080000ArtianStatus then
-    create_grinding_anim_hook()
-    create_lottery_anim_hook()
+    local bonusColorMethod = TD_GUI080000ArtianStatus:get_method("getEm0078_ArtianBonusColor")
+    if bonusColorMethod then
+        sdk.hook(bonusColorMethod, function(args)
+            if not RerollTracker.enabled then return end
+            local success, err = pcall(function()
+                local newBonusList = sdk.to_managed_object(args[3])
+                if newBonusList then
+                    local count = newBonusList:call("get_Count")
+                    if count and count > 0 then
+                        local bonusIds = {}
+                        for i = 0, count - 1 do
+                            local bonusId = newBonusList:call("get_Item", i)
+                            if bonusId and bonusId > 0 then
+                                table.insert(bonusIds, bonusId)
+                            end
+                        end
+                        if #bonusIds > 0 then
+                            RerollTracker._lastCapturedBonusIds = bonusIds
+                        end
+                    end
+                end
+            end)
+            if not success then
+                log.error("[RerollTracker] getEm0078_ArtianBonusColor hook error: " .. tostring(err))
+            end
+        end, nil)
+        log.info("[RerollTracker] getEm0078_ArtianBonusColor hook installed")
+    end
+
+    local grindingMethod = TD_GUI080000ArtianStatus:get_method("startArtianGrindingAnim(System.Action)")
+    if grindingMethod then
+        sdk.hook(grindingMethod, function(args)
+            if not RerollTracker.enabled then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local success, err = pcall(function()
+                local action = sdk.to_managed_object(args[3])
+                if action then
+                    action:Invoke()
+                end
+                if RerollTracker.trackingMode == RerollTracker.MODE_GRINDING then
+                    if RerollTracker._lastCapturedBonusIds and #RerollTracker._lastCapturedBonusIds > 0 then
+                        record_attempt(RerollTracker._lastCapturedBonusIds)
+                        RerollTracker._lastCapturedBonusIds = nil
+                    end
+                end
+            end)
+            if not success then
+                log.error("[RerollTracker] startArtianGrindingAnim hook error: " .. tostring(err))
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            return sdk.PreHookResult.SKIP_ORIGINAL
+        end, nil)
+        log.info("[RerollTracker] startArtianGrindingAnim hook installed")
+    end
+
+    local lotteryMethod = TD_GUI080000ArtianStatus:get_method("startSkillLotteryAnim(System.Action)")
+    if lotteryMethod then
+        sdk.hook(lotteryMethod, function(args)
+            if not RerollTracker.enabled then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local success, err = pcall(function()
+                local action = sdk.to_managed_object(args[3])
+                if action then
+                    action:Invoke()
+                end
+                if RerollTracker.trackingMode == RerollTracker.MODE_LOTTERY then
+                    if RerollTracker._lastCapturedSkillType and RerollTracker._lastCapturedSkillType > 0 then
+                        local seriesSkill, groupSkill = get_skill_names_from_artian_type(RerollTracker._lastCapturedSkillType)
+                        record_skill_attempt(seriesSkill, groupSkill)
+                        RerollTracker._lastCapturedSkillType = nil
+                    end
+                end
+            end)
+            if not success then
+                log.error("[RerollTracker] startSkillLotteryAnim hook error: " .. tostring(err))
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            return sdk.PreHookResult.SKIP_ORIGINAL
+        end, nil)
+        log.info("[RerollTracker] startSkillLotteryAnim hook installed")
+    end
 end
 
 if TD_LoopGaugeChangeRequirePoint then
-    create_animation_skip_hook(
-        TD_LoopGaugeChangeRequirePoint:get_method("startUpGrade(System.UInt32, System.Action)"),
-        4,
-        "startUpGrade"
-    )
+    local method = TD_LoopGaugeChangeRequirePoint:get_method("startUpGrade(System.UInt32, System.Action)")
+    if method then
+        sdk.hook(method, function(args)
+            if not RerollTracker.enabled then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local success, err = pcall(function()
+                local action = sdk.to_managed_object(args[4])
+                if action then
+                    action:Invoke()
+                end
+            end)
+            if not success then
+                log.error("[RerollTracker] startUpGrade hook error: " .. tostring(err))
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            return sdk.PreHookResult.SKIP_ORIGINAL
+        end, nil)
+        log.info("[RerollTracker] startUpGrade hook installed")
+    end
 end
 
 if TD_NotifyWindow then
-    local requestNotifyWindowMethod = TD_NotifyWindow:get_method("requestNotifyWindow")
-
-    if requestNotifyWindowMethod then
-        sdk.hook(requestNotifyWindowMethod, function(args)
-            if not RerollTracker.enableAutoSkip then
+    local method = TD_NotifyWindow:get_method("requestNotifyWindow")
+    if method then
+        sdk.hook(method, function(args)
+            if not RerollTracker.enabled then
                 return
             end
-
             local success, result = pcall(function()
                 local notifyWindowInfo = sdk.to_managed_object(args[3])
                 if not notifyWindowInfo then return end
-
                 local textInfo = notifyWindowInfo:get_TextInfo()
                 if not textInfo then return end
-
                 local windowId = notifyWindowInfo:get_NotifyWindowId()
                 if not windowId then return end
-
                 local windowIdName = notifyWindowID2Name[windowId]
                 if not windowIdName then return end
-
                 local targetDialogs = {
                     ["EQUIP_000"] = 0,
                     ["GUI080301_0005_DLG"] = 0,
                     ["GUI080301_0009_DLG"] = 1,
                     ["GUI080301_0010_DLG"] = 1,
                 }
-
                 local selectedIndex = targetDialogs[windowIdName]
                 if selectedIndex ~= nil then
                     notifyWindowInfo:set_SelectedIndex(selectedIndex)
-
                     local updateAction = notifyWindowInfo:get_UpdateAction()
                     if updateAction and updateAction:get_HasEvent() then
                         updateAction:execute()
                     end
-
                     notifyWindowInfo:executeWindowEndFunc()
-
-                    if RerollTracker.isMonitoring then
-                        if windowIdName == "GUI080301_0009_DLG" and RerollTracker.trackingMode == RerollTracker.MODE_GRINDING then
-                            RerollTracker.dialogSkipCount = (RerollTracker.dialogSkipCount or 0) + 1
-                            log.info(string.format("[RerollTracker] [GRINDING] Dialog #%d confirmed, recording after executeWindowEndFunc", RerollTracker.dialogSkipCount))
-                            RerollTracker.record_immediate()
-                        elseif windowIdName == "GUI080301_0010_DLG" and RerollTracker.trackingMode == RerollTracker.MODE_LOTTERY then
-                            RerollTracker.dialogSkipCount = (RerollTracker.dialogSkipCount or 0) + 1
-                            log.info(string.format("[RerollTracker] [LOTTERY] Dialog #%d confirmed, recording after executeWindowEndFunc", RerollTracker.dialogSkipCount))
-                            RerollTracker.record_immediate()
-                        end
-                    end
-
                     return sdk.PreHookResult.SKIP_ORIGINAL
                 end
             end)
-
             if not success then
-                log.error("[RerollTracker] Dialog skip hook error: " .. tostring(result))
+                log.error("[RerollTracker] Dialog hook error: " .. tostring(result))
             end
-
             return result
         end, nil)
-        log.info("[RerollTracker] Dialog skip hook installed successfully")
+        log.info("[RerollTracker] Dialog skip hook installed")
     end
 end
 
-
-
-sdk.hook(TD_SaveDataManager:get_method("update()"), function(args)
-    if RerollTracker.SaveData ~= nil then return end
-
-    local success, err = pcall(function()
-        local mgr = sdk.to_managed_object(args[2])
-        if mgr then
-            RerollTracker.SaveData = FN_GetCurrentUserSaveData:call(mgr)
-            if RerollTracker.SaveData then
-                RerollTracker.EquipBox = RerollTracker.SaveData._Equip._EquipBox
-                log.info("[RerollTracker] SaveData initialized")
-
-                RerollTracker.load_session_from_json()
-            end
-        end
-    end)
-
-    if not success then
-        log.error("[RerollTracker] Hook error: " .. tostring(err))
-    end
-end)
-
-re.on_frame(function()
-    if RerollTracker.isMonitoring and #RerollTracker.pendingRecords > 0 then
-        RerollTracker.process_pending_records()
-    end
-end)
+RerollTracker.load_from_json()
 
 re.on_draw_ui(function()
     if imgui.tree_node("Artian Reroll Tracker") then
-        imgui.text("Gogmazios Artian Weapon Refinement Tracker")
+        imgui.text("Gogmazios Artian Weapon Refinement Tracker v3.2")
         imgui.spacing()
 
-        if not RerollTracker.SaveData then
-            imgui.text_colored("SaveData not loaded yet", 0xFFFF0000)
-        else
-            imgui.text("Tracking Mode:")
-            imgui.same_line()
-            if imgui.button(RerollTracker.modeNames[RerollTracker.trackingMode]) then
-                RerollTracker.trackingMode = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and RerollTracker.MODE_LOTTERY or RerollTracker.MODE_GRINDING
-                log.info(string.format("[RerollTracker] Mode changed to: %s", RerollTracker.modeNames[RerollTracker.trackingMode]))
-
-                if RerollTracker.isMonitoring and RerollTracker.currentSession then
-                    RerollTracker.start_monitoring()
-                end
+        imgui.text("Mode:")
+        imgui.same_line()
+        local modeChanged, newMode = imgui.combo("##Mode", RerollTracker.trackingMode, RerollTracker.modeLabels)
+        if modeChanged and newMode >= 1 and newMode <= #RerollTracker.modeLabels then
+            RerollTracker.trackingMode = newMode
+            if RerollTracker.enabled and RerollTracker.currentSession then
+                start_new_session()
             end
-            imgui.spacing()
-            imgui.separator()
-            imgui.spacing()
-
-            imgui.text("Element:")
-            imgui.same_line()
-            local elementChanged, newElement = imgui.combo("##Element", RerollTracker.selectedElement, RerollTracker.elementList)
-            if elementChanged then
-                if newElement >= 1 and newElement <= #RerollTracker.elementList then
-                    RerollTracker.selectedElement = newElement
-                    log.info(string.format("[RerollTracker] Element changed: index=%d, value=%s", newElement, RerollTracker.elementList[newElement]))
-                    if RerollTracker.isMonitoring and RerollTracker.currentSession then
-                        RerollTracker.start_monitoring()
-                    end
-                else
-                    log.error(string.format("[RerollTracker] Invalid element index: %d (valid: 1-%d)", newElement, #RerollTracker.elementList))
-                end
-            end
-
-            imgui.text("Weapon Type:")
-            imgui.same_line()
-            local weaponChanged, newWeapon = imgui.combo("##WeaponType", RerollTracker.selectedWeaponType, RerollTracker.weaponTypeList)
-            if weaponChanged then
-                if newWeapon >= 1 and newWeapon <= #RerollTracker.weaponTypeList then
-                    RerollTracker.selectedWeaponType = newWeapon
-                    log.info(string.format("[RerollTracker] Weapon changed: index=%d, value=%s", newWeapon, RerollTracker.weaponTypeList[newWeapon]))
-                    if RerollTracker.isMonitoring and RerollTracker.currentSession then
-                        RerollTracker.start_monitoring()
-                    end
-                else
-                    log.error(string.format("[RerollTracker] Invalid weapon index: %d (valid: 1-%d)", newWeapon, #RerollTracker.weaponTypeList))
-                end
-            end
-
-            imgui.spacing()
-
-            local changed, newValue = imgui.checkbox("Enable Reroll Tracker", RerollTracker.isMonitoring)
-            if changed then
-                if newValue then
-                    RerollTracker.start_monitoring()
-                    if RerollTracker.isMonitoring then
-                        RerollTracker.enableAutoSkip = true
-                        log.info("[RerollTracker] Reroll Tracker ENABLED (monitoring + auto skip)")
-                    end
-                else
-                    RerollTracker.stop_monitoring()
-                    RerollTracker.enableAutoSkip = false
-                    log.info("[RerollTracker] Reroll Tracker DISABLED")
-                end
-            end
-
-            imgui.spacing()
-
-            if RerollTracker.isMonitoring then
-                imgui.text_colored("Status: ACTIVE", 0xFF00FF00)
-
-                if RerollTracker.currentSession then
-                    imgui.same_line()
-                    local modeLabel = RerollTracker.currentSession.mode or "?"
-                    imgui.text(string.format("| [%s] %s | Attempts: %d",
-                        RerollTracker.currentSession.nickname or "Unknown",
-                        modeLabel:upper(),
-                        #RerollTracker.currentSession.attempts))
-                end
-            else
-                imgui.text_colored("Status: INACTIVE", 0xFF888888)
-            end
-
-            imgui.spacing()
-            imgui.separator()
-
-            if imgui.button("Show Session Summary (Log)") then
-                RerollTracker.show_session_summary()
-            end
-
-            if imgui.button("Clear History") then
-                RerollTracker.clear_history()
-            end
-
-            imgui.spacing()
-            imgui.separator()
-            imgui.text(string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath))
-            imgui.text(string.format("Total weapons recorded: %d", #RerollTracker.weapons))
         end
+
+        imgui.text("Element:")
+        imgui.same_line()
+        local elementChanged, newElement = imgui.combo("##Element", RerollTracker.selectedElement, RerollTracker.elementList)
+        if elementChanged and newElement >= 1 and newElement <= #RerollTracker.elementList then
+            RerollTracker.selectedElement = newElement
+            if RerollTracker.enabled and RerollTracker.currentSession then
+                start_new_session()
+            end
+        end
+
+        imgui.text("Weapon Type:")
+        imgui.same_line()
+        local weaponChanged, newWeapon = imgui.combo("##WeaponType", RerollTracker.selectedWeaponType, RerollTracker.weaponTypeList)
+        if weaponChanged and newWeapon >= 1 and newWeapon <= #RerollTracker.weaponTypeList then
+            RerollTracker.selectedWeaponType = newWeapon
+            if RerollTracker.enabled and RerollTracker.currentSession then
+                start_new_session()
+            end
+        end
+
+        imgui.spacing()
+
+        local changed, newValue = imgui.checkbox("Enable Tracker", RerollTracker.enabled)
+        if changed then
+            RerollTracker.enabled = newValue
+            if newValue then
+                start_new_session()
+                log.info("[RerollTracker] ENABLED")
+            else
+                local nickname, total = finish_current_session()
+                if nickname then
+                    log.info(string.format("[RerollTracker] DISABLED - %s: %d attempts", nickname, total))
+                end
+            end
+        end
+
+        imgui.spacing()
+
+        if RerollTracker.enabled then
+            imgui.text_colored("Status: ACTIVE", 0xFF00FF00)
+            if RerollTracker.currentSession then
+                imgui.same_line()
+                imgui.text(string.format("| %s | Attempts: %d",
+                    RerollTracker.currentSession.nickname,
+                    #RerollTracker.currentSession.attempts))
+            end
+        else
+            imgui.text_colored("Status: INACTIVE", 0xFF888888)
+        end
+
+        imgui.spacing()
+        imgui.separator()
+
+        if imgui.button("Clear History") then
+            RerollTracker.clear_history()
+        end
+
+        imgui.spacing()
+        imgui.text(string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath))
+        imgui.text(string.format("Total weapons recorded: %d", #RerollTracker.weapons))
 
         imgui.tree_pop()
     end
 end)
 
-log.info("[RerollTracker] Loaded successfully")
+log.info("[RerollTracker] Loaded successfully (v3.2)")
