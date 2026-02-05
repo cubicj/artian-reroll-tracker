@@ -6,14 +6,15 @@ RerollTracker.weapons = {}
 RerollTracker.attemptCount = 0
 RerollTracker.dataFilePath = "reroll_sessions.json"
 
-RerollTracker.elementList = {"화속", "수속", "얼음", "번개", "용속", "폭파", "마비"}
-RerollTracker.weaponTypeList = {"대검", "태도", "손검", "쌍검", "해머", "피리", "랜스", "건랜", "슬액", "차액", "충곤", "라보", "헤보", "활"}
-RerollTracker.selectedElement = 1
-RerollTracker.selectedWeaponType = 1
 RerollTracker.trackingMode = 1
 RerollTracker.MODE_GRINDING = 1
 RerollTracker.MODE_LOTTERY = 2
-RerollTracker.modeLabels = {"Grinding (복원 강화)", "Lottery (스킬 재부여)"}
+
+RerollTracker._lastCapturedBonusIds = nil
+RerollTracker._lastCapturedSkillType = nil
+RerollTracker._lastCapturedWeaponType = nil
+RerollTracker._lastCapturedAttribute = nil
+RerollTracker._lastCapturedKagekiType = nil
 
 local TD_ArtianUtil = sdk.find_type_definition("app.ArtianUtil")
 local TD_Em0078ArtianUtil = sdk.find_type_definition("app.Em0078_ArtianUtil")
@@ -22,10 +23,12 @@ local TD_GUI080000ArtianStatus = sdk.find_type_definition("app.GUI080000ArtianSt
 local TD_LoopGaugeChangeRequirePoint = sdk.find_type_definition("app.cGUILoopGaugeChangeRequirePoint")
 local TD_NotifyWindow = sdk.find_type_definition("app.cGUISystemModuleNotifyWindowApp")
 local TD_NotifyWindowDef = sdk.find_type_definition("app.GUINotifyWindowDef.ID")
+local TD_WeaponUtil = sdk.find_type_definition("app.WeaponUtil")
 
 local FN_GetBonusName = TD_ArtianUtil and TD_ArtianUtil:get_method("Name(app.ArtianDef.BONUS_ID)")
 local FN_GetLocalizedMsg = TD_GuiMessage and TD_GuiMessage:get_method("get(System.Guid)")
 local FN_LotterySkill = TD_Em0078ArtianUtil and TD_Em0078ArtianUtil:get_method("lotterySkill(app.savedata.cEquipWork)")
+local FN_GetWeaponTypeName = TD_WeaponUtil and TD_WeaponUtil:get_method("getWeaponTypeName(app.WeaponDef.TYPE)")
 
 local function getEnumTables(typeDef)
     local byName, byValue = {}, {}
@@ -56,6 +59,21 @@ local function get_bonus_name(bonusId)
     end)
     if success then return result end
     return string.format("Bonus_%d", bonusId)
+end
+
+local function get_weapon_type_name(weaponType)
+    if not FN_GetWeaponTypeName or not FN_GetLocalizedMsg then
+        return string.format("Type_%d", weaponType)
+    end
+    local success, result = pcall(function()
+        local guidObj = FN_GetWeaponTypeName:call(nil, weaponType)
+        if not guidObj then return string.format("Type_%d", weaponType) end
+        local text = FN_GetLocalizedMsg:call(nil, guidObj)
+        if text and text ~= "" then return text end
+        return string.format("Type_%d", weaponType)
+    end)
+    if success then return result end
+    return string.format("Type_%d", weaponType)
 end
 
 local ArtianSkillData = nil
@@ -147,25 +165,80 @@ local function start_new_session()
     if RerollTracker.currentSession then
         finish_current_session()
     end
-    local element = RerollTracker.elementList[RerollTracker.selectedElement]
-    local weaponType = RerollTracker.weaponTypeList[RerollTracker.selectedWeaponType]
     local modeName = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
-    local nickname = element .. " " .. weaponType
     RerollTracker.currentSession = {
-        nickname = nickname,
-        element = element,
-        weaponType = weaponType,
+        nickname = "Unknown",
+        weaponType = -1,
+        weaponTypeName = "Unknown",
+        attribute = "",
+        kagekiType = "",
         mode = modeName,
         startTime = os.date("%Y-%m-%d %H:%M:%S"),
         attempts = {}
     }
     RerollTracker.attemptCount = 0
-    log.info(string.format("[RerollTracker] Session started: %s (%s)", nickname, modeName))
+    log.info(string.format("[RerollTracker] Session started (%s)", modeName))
+end
+
+local function check_and_update_session_weapon()
+    if not RerollTracker.currentSession then return end
+    local capturedType = RerollTracker._lastCapturedWeaponType
+    local capturedAttribute = RerollTracker._lastCapturedAttribute or ""
+    local capturedKageki = RerollTracker._lastCapturedKagekiType or ""
+    local sessionType = RerollTracker.currentSession.weaponType
+    local sessionAttribute = RerollTracker.currentSession.attribute or ""
+    local sessionKageki = RerollTracker.currentSession.kagekiType or ""
+    if sessionType == -1 or RerollTracker.currentSession.weaponTypeName == "Unknown" then
+        if capturedType then
+            local newTypeName = get_weapon_type_name(capturedType)
+            RerollTracker.currentSession.weaponType = capturedType
+            RerollTracker.currentSession.weaponTypeName = newTypeName
+            RerollTracker.currentSession.attribute = capturedAttribute
+            RerollTracker.currentSession.kagekiType = capturedKageki
+            local nickname = newTypeName
+            if capturedAttribute ~= "" then
+                nickname = capturedAttribute .. " " .. nickname
+            end
+            if capturedKageki ~= "" then
+                nickname = capturedKageki .. " " .. nickname
+            end
+            RerollTracker.currentSession.nickname = nickname
+            log.info(string.format("[RerollTracker] Session initialized: %s", nickname))
+        end
+        return
+    end
+    local typeChanged = capturedType and capturedType ~= sessionType
+    local attrChanged = capturedAttribute ~= "" and sessionAttribute ~= "" and capturedAttribute ~= sessionAttribute
+    local kagekiChanged = capturedKageki ~= "" and sessionKageki ~= "" and capturedKageki ~= sessionKageki
+    if typeChanged or attrChanged or kagekiChanged then
+        local oldNickname = RerollTracker.currentSession.nickname
+        local oldAttempts = #RerollTracker.currentSession.attempts
+        log.info(string.format("[RerollTracker] Weapon changed - finishing: %s (%d attempts)", oldNickname, oldAttempts))
+        finish_current_session()
+        start_new_session()
+        if capturedType then
+            local newTypeName = get_weapon_type_name(capturedType)
+            RerollTracker.currentSession.weaponType = capturedType
+            RerollTracker.currentSession.weaponTypeName = newTypeName
+            RerollTracker.currentSession.attribute = capturedAttribute
+            RerollTracker.currentSession.kagekiType = capturedKageki
+            local nickname = newTypeName
+            if capturedAttribute ~= "" then
+                nickname = capturedAttribute .. " " .. nickname
+            end
+            if capturedKageki ~= "" then
+                nickname = capturedKageki .. " " .. nickname
+            end
+            RerollTracker.currentSession.nickname = nickname
+        end
+        log.info(string.format("[RerollTracker] New session: %s", RerollTracker.currentSession.nickname))
+    end
 end
 
 local function record_attempt(bonusIds)
     if not RerollTracker.enabled or not RerollTracker.currentSession then return end
     if #bonusIds == 0 then return end
+    check_and_update_session_weapon()
     RerollTracker.attemptCount = RerollTracker.attemptCount + 1
     local bonusNames = {}
     for _, id in ipairs(bonusIds) do
@@ -184,6 +257,7 @@ end
 local function record_skill_attempt(seriesSkill, groupSkill)
     if not RerollTracker.enabled or not RerollTracker.currentSession then return end
     if not seriesSkill or seriesSkill == "" then return end
+    check_and_update_session_weapon()
     RerollTracker.attemptCount = RerollTracker.attemptCount + 1
     local attempt = {
         attemptNum = RerollTracker.attemptCount,
@@ -231,10 +305,10 @@ function RerollTracker.clear_history()
     RerollTracker.attemptCount = 0
     RerollTracker.save_to_json()
     log.info("[RerollTracker] History cleared")
+    if RerollTracker.enabled then
+        start_new_session()
+    end
 end
-
-RerollTracker._lastCapturedBonusIds = nil
-RerollTracker._lastCapturedSkillType = nil
 
 if FN_LotterySkill then
     sdk.hook(FN_LotterySkill,
@@ -243,7 +317,6 @@ if FN_LotterySkill then
         end,
         function(retval)
             if not RerollTracker.enabled then return retval end
-            if RerollTracker.trackingMode ~= RerollTracker.MODE_LOTTERY then return retval end
             local success, err = pcall(function()
                 local equipWork = sdk.to_managed_object(RerollTracker._lotterySkillEquipWork)
                 if equipWork then
@@ -252,7 +325,6 @@ if FN_LotterySkill then
                         local aSkillType = decode_artian_skill_type(bonusByCreating)
                         if aSkillType and aSkillType > 0 then
                             RerollTracker._lastCapturedSkillType = aSkillType
-                            log.info(string.format("[RerollTracker] Captured ArtianSkillType: %d", aSkillType))
                         end
                     end
                 end
@@ -288,12 +360,48 @@ if TD_GUI080000ArtianStatus then
                         end
                     end
                 end
+                local weaponTypeArg = args[7]
+                if weaponTypeArg then
+                    local weaponType = sdk.to_int64(weaponTypeArg) & 0xFFFFFFFF
+                    if weaponType and weaponType >= 0 and weaponType <= 15 then
+                        RerollTracker._lastCapturedWeaponType = weaponType
+                    end
+                end
             end)
             if not success then
                 log.error("[RerollTracker] getEm0078_ArtianBonusColor hook error: " .. tostring(err))
             end
         end, nil)
         log.info("[RerollTracker] getEm0078_ArtianBonusColor hook installed")
+    end
+
+    local setWeaponDataCoreMethod = TD_GUI080000ArtianStatus:get_method("setWeaponDataCore(app.EquipDef.EquipSet)")
+    if setWeaponDataCoreMethod then
+        sdk.hook(setWeaponDataCoreMethod, function(args)
+            local success, err = pcall(function()
+                local this = sdk.to_managed_object(args[2])
+                if this then
+                    local createTypeText = this:get_field("_ArtianCreateTypeText")
+                    if createTypeText then
+                        local kagekiName = createTypeText:call("get_Message")
+                        if kagekiName and kagekiName ~= "" then
+                            RerollTracker._lastCapturedKagekiType = kagekiName
+                        end
+                    end
+                    local perfText = this:get_field("_PerformanceText")
+                    if perfText then
+                        local perfName = perfText:call("get_Message")
+                        if perfName and perfName ~= "" then
+                            RerollTracker._lastCapturedAttribute = perfName
+                        end
+                    end
+                end
+            end)
+            if not success then
+                log.error("[RerollTracker] setWeaponDataCore hook error: " .. tostring(err))
+            end
+        end, nil)
+        log.info("[RerollTracker] setWeaponDataCore hook installed")
     end
 
     local grindingMethod = TD_GUI080000ArtianStatus:get_method("startArtianGrindingAnim(System.Action)")
@@ -307,11 +415,14 @@ if TD_GUI080000ArtianStatus then
                 if action then
                     action:Invoke()
                 end
-                if RerollTracker.trackingMode == RerollTracker.MODE_GRINDING then
-                    if RerollTracker._lastCapturedBonusIds and #RerollTracker._lastCapturedBonusIds > 0 then
-                        record_attempt(RerollTracker._lastCapturedBonusIds)
-                        RerollTracker._lastCapturedBonusIds = nil
-                    end
+                if RerollTracker.currentSession and RerollTracker.currentSession.mode ~= "grinding" then
+                    finish_current_session()
+                    RerollTracker.trackingMode = RerollTracker.MODE_GRINDING
+                    start_new_session()
+                end
+                if RerollTracker._lastCapturedBonusIds and #RerollTracker._lastCapturedBonusIds > 0 then
+                    record_attempt(RerollTracker._lastCapturedBonusIds)
+                    RerollTracker._lastCapturedBonusIds = nil
                 end
             end)
             if not success then
@@ -334,12 +445,15 @@ if TD_GUI080000ArtianStatus then
                 if action then
                     action:Invoke()
                 end
-                if RerollTracker.trackingMode == RerollTracker.MODE_LOTTERY then
-                    if RerollTracker._lastCapturedSkillType and RerollTracker._lastCapturedSkillType > 0 then
-                        local seriesSkill, groupSkill = get_skill_names_from_artian_type(RerollTracker._lastCapturedSkillType)
-                        record_skill_attempt(seriesSkill, groupSkill)
-                        RerollTracker._lastCapturedSkillType = nil
-                    end
+                if RerollTracker.currentSession and RerollTracker.currentSession.mode ~= "lottery" then
+                    finish_current_session()
+                    RerollTracker.trackingMode = RerollTracker.MODE_LOTTERY
+                    start_new_session()
+                end
+                if RerollTracker._lastCapturedSkillType and RerollTracker._lastCapturedSkillType > 0 then
+                    local seriesSkill, groupSkill = get_skill_names_from_artian_type(RerollTracker._lastCapturedSkillType)
+                    record_skill_attempt(seriesSkill, groupSkill)
+                    RerollTracker._lastCapturedSkillType = nil
                 end
             end)
             if not success then
@@ -421,41 +535,6 @@ RerollTracker.load_from_json()
 
 re.on_draw_ui(function()
     if imgui.tree_node("Artian Reroll Tracker") then
-        imgui.text("Gogmazios Artian Weapon Refinement Tracker v3.2")
-        imgui.spacing()
-
-        imgui.text("Mode:")
-        imgui.same_line()
-        local modeChanged, newMode = imgui.combo("##Mode", RerollTracker.trackingMode, RerollTracker.modeLabels)
-        if modeChanged and newMode >= 1 and newMode <= #RerollTracker.modeLabels then
-            RerollTracker.trackingMode = newMode
-            if RerollTracker.enabled and RerollTracker.currentSession then
-                start_new_session()
-            end
-        end
-
-        imgui.text("Element:")
-        imgui.same_line()
-        local elementChanged, newElement = imgui.combo("##Element", RerollTracker.selectedElement, RerollTracker.elementList)
-        if elementChanged and newElement >= 1 and newElement <= #RerollTracker.elementList then
-            RerollTracker.selectedElement = newElement
-            if RerollTracker.enabled and RerollTracker.currentSession then
-                start_new_session()
-            end
-        end
-
-        imgui.text("Weapon Type:")
-        imgui.same_line()
-        local weaponChanged, newWeapon = imgui.combo("##WeaponType", RerollTracker.selectedWeaponType, RerollTracker.weaponTypeList)
-        if weaponChanged and newWeapon >= 1 and newWeapon <= #RerollTracker.weaponTypeList then
-            RerollTracker.selectedWeaponType = newWeapon
-            if RerollTracker.enabled and RerollTracker.currentSession then
-                start_new_session()
-            end
-        end
-
-        imgui.spacing()
-
         local changed, newValue = imgui.checkbox("Enable Tracker", RerollTracker.enabled)
         if changed then
             RerollTracker.enabled = newValue
@@ -475,13 +554,26 @@ re.on_draw_ui(function()
         if RerollTracker.enabled then
             imgui.text_colored("Status: ACTIVE", 0xFF00FF00)
             if RerollTracker.currentSession then
+                local modeText = RerollTracker.currentSession.mode == "grinding" and "Grinding" or "Lottery"
                 imgui.same_line()
-                imgui.text(string.format("| %s | Attempts: %d",
+                imgui.text(string.format("| %s | %s | Attempts: %d",
+                    modeText,
                     RerollTracker.currentSession.nickname,
                     #RerollTracker.currentSession.attempts))
             end
         else
             imgui.text_colored("Status: INACTIVE", 0xFF888888)
+        end
+
+        imgui.spacing()
+        imgui.separator()
+        imgui.spacing()
+
+        if RerollTracker.currentSession then
+            imgui.text("Current:")
+            imgui.text(string.format("  %s", RerollTracker.currentSession.nickname))
+        else
+            imgui.text_colored("Weapon: (Auto-detected on first action)", 0xFF888888)
         end
 
         imgui.spacing()
@@ -499,4 +591,4 @@ re.on_draw_ui(function()
     end
 end)
 
-log.info("[RerollTracker] Loaded successfully (v3.2)")
+log.info("[RerollTracker] Loaded successfully (v3.7)")
