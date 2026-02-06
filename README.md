@@ -1,92 +1,99 @@
 # Artian Reroll Tracker
 
-거극(Gogmazios) 아티어 무기 복원 강화 리세마라 추적 모드
+Gogmazios Artian weapon refinement and skill lottery tracker for Monster Hunter Wilds.
 
-## 기능
+## Features
 
-- 복원 강화 시 나오는 5개 보너스 옵션 자동 기록
-- 무기별 시도 번호 자동 관리
-- JSON 파일로 자동 저장 (`reframework/data/reroll_sessions.json`)
-- 한글 보너스 이름 표시
+- **Grinding Mode**: Tracks 5 bonus options from weapon grinding
+- **Lottery Mode**: Tracks skill lottery results (Series/Group skills)
+- Auto-detects weapon type, attribute, and Kageki type
+- Animation skip for faster rerolling (~0.5-0.6 seconds per attempt)
+- Auto-skip confirmation dialogs
+- Auto session management (detects weapon changes mid-session)
+- JSON export for data analysis
 
-## 사용 방법
+## Requirements
 
-### 1. 모니터링 시작
-1. 게임에서 Insert 키 → "Artian Reroll Tracker" 메뉴
-2. "Start Monitoring" 클릭
-3. 복원 강화 진행
+- REFramework
+- Monster Hunter Wilds
 
-### 2. 자동 기록
-- 복원 강화 실행 시마다 자동으로 기록됨
-- 무기를 바꾸면 시도 번호 자동 리셋
-- 같은 무기 = 시도 번호 계속 증가 (#1, #2, #3...)
+## Usage
 
-### 3. 모니터링 종료
-- "Stop Monitoring" 클릭
-- 세션 데이터가 JSON에 자동 저장
+1. Open REFramework menu (Insert key)
+2. Find "Artian Reroll Tracker" section
+3. Check "Enable Tracker" to start tracking
+4. Perform grinding or skill lottery actions
+5. Uncheck to stop and save session
 
-### 4. 데이터 분석
-- JSON 파일 위치: `C:\Program Files (x86)\Steam\steamapps\common\MonsterHunterWilds\reframework\data\reroll_sessions.json`
-- 파이썬/TypeScript 등으로 분석 가능
+## Auto Detection
 
-## JSON 출력 형식
+The tracker automatically detects:
+- Weapon type (Great Sword, Long Sword, etc.)
+- Attribute type (Fire, Water, Paralysis, etc.)
+- Kageki type (Attack Kageki, Element Kageki, etc.)
 
+If you change weapons mid-session, a new session automatically starts.
+
+## JSON Output
+
+Data is saved to: `reframework/data/reroll_sessions.json`
+
+### Grinding Mode Example
 ```json
 {
-  "savedAt": "2026-02-02 18:30:00",
-  "currentSession": {
-    "startTime": "2026-02-02 18:00:00",
-    "endTime": "2026-02-02 18:30:00",
-    "attempts": [
-      {
-        "attemptNum": 1,
-        "weaponIndex": 414,
-        "timestamp": "2026-02-02 18:05:12",
-        "gameUIBonuses": [
-          "회심률 강화Ⅱ",
-          "예리도/장전 강화Ⅰ",
-          "회심률 강화 EX",
-          "기초 공격력 강화Ⅱ",
-          "기초 공격력 강화 EX"
-        ],
-        "bonusByGrinding": 16009017007010,
-        "bonusSlots": [16, 9, 17, 7, 10],
-        "grindingNum": 5
-      }
-    ]
-  },
-  "history": []
+  "nickname": "Attack Kageki Type Paralysis Type Sword & Shield",
+  "weaponType": 1,
+  "weaponTypeName": "Sword & Shield",
+  "attribute": "Paralysis Type",
+  "kagekiType": "Attack Kageki Type",
+  "mode": "grinding",
+  "attempts": [
+    {
+      "attemptNum": 1,
+      "timestamp": "2026-02-05 12:00:00",
+      "bonuses": ["Crit Rate II", "Attack EX", "Sharpness I", "Attack II", "Crit Rate I"]
+    }
+  ]
 }
 ```
 
-## 주요 필드
+### Lottery Mode Example
+```json
+{
+  "mode": "lottery",
+  "attempts": [
+    {
+      "attemptNum": 1,
+      "timestamp": "2026-02-05 12:00:00",
+      "skills": {
+        "series": "Insect Awakening",
+        "group": "Gogmazios Apocalypse"
+      }
+    }
+  ]
+}
+```
 
-- `attemptNum`: 시도 번호 (무기별)
-- `weaponIndex`: 장비 박스 인덱스 (0~2399)
-- `gameUIBonuses`: 게임 UI에 표시되는 5개 보너스 (한글)
-- `bonusByGrinding`: 원본 uint64 값
-- `bonusSlots`: 15자리 파싱 결과 (참고용)
+## Workflow
 
-## 워크플로우
+1. Prepare artian weapon for grinding/lottery
+2. Enable Tracker
+3. Perform actions until materials run out
+4. Disable Tracker (session saves automatically)
+5. Analyze JSON file
+6. If desired combination found, note the attempt number
+7. Reload save and perform that many attempts
 
-1. 복원 강화할 무기 준비
-2. Start Monitoring
-3. 재료 소진까지 연속 강화
-4. Stop Monitoring
-5. JSON 파일 확인
-6. 원하는 옵션 조합을 찾으면 해당 시도 번호 확인
-7. 세이브 롤백 후 해당 시도 번호까지 강화
+## Notes
 
-## 주의사항
+- Tracker only activates when enabled
+- No impact on other mods when disabled
+- Multiplayer safe (local data only)
 
-- 모니터링 중에는 게임 UI에서 G키로 직접 강화 실행 필요
-- 세이브하지 않고 종료하면 롤백됨 (리세마라 원리)
-- JSON 파일은 게임 종료 시까지 유지됨
+## Version
 
-## 버전
+v3.7.1
 
-v1.0.0 - 기본 추적 시스템
-
-## 제작
+## Author
 
 JCubic

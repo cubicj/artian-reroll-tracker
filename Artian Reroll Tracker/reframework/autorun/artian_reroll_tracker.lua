@@ -101,7 +101,6 @@ local function init_artian_skill_data()
             end
         end
         ArtianSkillDataInited = true
-        log.info("[RerollTracker] ArtianSkillData initialized")
     end)
     if not success then
         log.error("[RerollTracker] init_artian_skill_data error: " .. tostring(err))
@@ -177,7 +176,6 @@ local function start_new_session()
         attempts = {}
     }
     RerollTracker.attemptCount = 0
-    log.info(string.format("[RerollTracker] Session started (%s)", modeName))
 end
 
 local function check_and_update_session_weapon()
@@ -203,7 +201,6 @@ local function check_and_update_session_weapon()
                 nickname = capturedKageki .. " " .. nickname
             end
             RerollTracker.currentSession.nickname = nickname
-            log.info(string.format("[RerollTracker] Session initialized: %s", nickname))
         end
         return
     end
@@ -211,9 +208,6 @@ local function check_and_update_session_weapon()
     local attrChanged = capturedAttribute ~= "" and sessionAttribute ~= "" and capturedAttribute ~= sessionAttribute
     local kagekiChanged = capturedKageki ~= "" and sessionKageki ~= "" and capturedKageki ~= sessionKageki
     if typeChanged or attrChanged or kagekiChanged then
-        local oldNickname = RerollTracker.currentSession.nickname
-        local oldAttempts = #RerollTracker.currentSession.attempts
-        log.info(string.format("[RerollTracker] Weapon changed - finishing: %s (%d attempts)", oldNickname, oldAttempts))
         finish_current_session()
         start_new_session()
         if capturedType then
@@ -231,7 +225,6 @@ local function check_and_update_session_weapon()
             end
             RerollTracker.currentSession.nickname = nickname
         end
-        log.info(string.format("[RerollTracker] New session: %s", RerollTracker.currentSession.nickname))
     end
 end
 
@@ -250,7 +243,6 @@ local function record_attempt(bonusIds)
         bonuses = bonusNames
     }
     table.insert(RerollTracker.currentSession.attempts, attempt)
-    log.info(string.format("[RerollTracker] #%d: [%s]", RerollTracker.attemptCount, table.concat(bonusNames, ", ")))
     RerollTracker.save_to_json()
 end
 
@@ -268,7 +260,6 @@ local function record_skill_attempt(seriesSkill, groupSkill)
         }
     }
     table.insert(RerollTracker.currentSession.attempts, attempt)
-    log.info(string.format("[RerollTracker] #%d: [%s / %s]", RerollTracker.attemptCount, seriesSkill, groupSkill or ""))
     RerollTracker.save_to_json()
 end
 
@@ -295,7 +286,6 @@ function RerollTracker.load_from_json()
     end)
     if success and data then
         RerollTracker.weapons = data.weapons or {}
-        log.info(string.format("[RerollTracker] Loaded %d weapons", #RerollTracker.weapons))
     end
 end
 
@@ -304,7 +294,6 @@ function RerollTracker.clear_history()
     RerollTracker.currentSession = nil
     RerollTracker.attemptCount = 0
     RerollTracker.save_to_json()
-    log.info("[RerollTracker] History cleared")
     if RerollTracker.enabled then
         start_new_session()
     end
@@ -313,6 +302,7 @@ end
 if FN_LotterySkill then
     sdk.hook(FN_LotterySkill,
         function(args)
+            if not RerollTracker.enabled then return end
             RerollTracker._lotterySkillEquipWork = args[2]
         end,
         function(retval)
@@ -335,7 +325,6 @@ if FN_LotterySkill then
             return retval
         end
     )
-    log.info("[RerollTracker] lotterySkill hook installed")
 end
 
 if TD_GUI080000ArtianStatus then
@@ -372,12 +361,12 @@ if TD_GUI080000ArtianStatus then
                 log.error("[RerollTracker] getEm0078_ArtianBonusColor hook error: " .. tostring(err))
             end
         end, nil)
-        log.info("[RerollTracker] getEm0078_ArtianBonusColor hook installed")
     end
 
     local setWeaponDataCoreMethod = TD_GUI080000ArtianStatus:get_method("setWeaponDataCore(app.EquipDef.EquipSet)")
     if setWeaponDataCoreMethod then
         sdk.hook(setWeaponDataCoreMethod, function(args)
+            if not RerollTracker.enabled then return end
             local success, err = pcall(function()
                 local this = sdk.to_managed_object(args[2])
                 if this then
@@ -401,7 +390,6 @@ if TD_GUI080000ArtianStatus then
                 log.error("[RerollTracker] setWeaponDataCore hook error: " .. tostring(err))
             end
         end, nil)
-        log.info("[RerollTracker] setWeaponDataCore hook installed")
     end
 
     local grindingMethod = TD_GUI080000ArtianStatus:get_method("startArtianGrindingAnim(System.Action)")
@@ -431,7 +419,6 @@ if TD_GUI080000ArtianStatus then
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
         end, nil)
-        log.info("[RerollTracker] startArtianGrindingAnim hook installed")
     end
 
     local lotteryMethod = TD_GUI080000ArtianStatus:get_method("startSkillLotteryAnim(System.Action)")
@@ -462,7 +449,6 @@ if TD_GUI080000ArtianStatus then
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
         end, nil)
-        log.info("[RerollTracker] startSkillLotteryAnim hook installed")
     end
 end
 
@@ -485,7 +471,6 @@ if TD_LoopGaugeChangeRequirePoint then
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
         end, nil)
-        log.info("[RerollTracker] startUpGrade hook installed")
     end
 end
 
@@ -501,7 +486,6 @@ if TD_NotifyWindow then
                 local windowId = notifyWindowInfo:get_NotifyWindowId()
                 if not windowId then return end
                 local windowIdName = notifyWindowID2Name[windowId] or string.format("UNKNOWN_%d", windowId)
-                log.info(string.format("[Dialog] ID=%d, Name=%s", windowId, windowIdName))
                 if not RerollTracker.enabled then return end
                 local targetDialogs = {
                     ["EQUIP_000"] = 0,
@@ -526,39 +510,8 @@ if TD_NotifyWindow then
             end
             return result
         end, nil)
-        log.info("[RerollTracker] Dialog skip hook installed")
     end
 end
-
-RerollTracker._inGrindCore = false
-RerollTracker._grindCoreTime = 0
-
-local TD_GUI000019 = sdk.find_type_definition("app.GUI000019")
-
-if TD_GUI000019 then
-    local grindCoreMethod = TD_GUI000019:get_method("grindCore()")
-    if grindCoreMethod then
-        sdk.hook(grindCoreMethod, function(args)
-            if RerollTracker.enabled then
-                RerollTracker._inGrindCore = true
-                RerollTracker._grindCoreTime = os.clock()
-            end
-        end, nil)
-        log.info("[RerollTracker] grindCore hook installed")
-    end
-
-    local executeMethod = TD_GUI000019:get_method("execute()")
-    if executeMethod then
-        sdk.hook(executeMethod, function(args)
-            if RerollTracker.enabled then
-                RerollTracker._inGrindCore = true
-                RerollTracker._grindCoreTime = os.clock()
-            end
-        end, nil)
-        log.info("[RerollTracker] execute hook installed")
-    end
-end
-
 
 RerollTracker.load_from_json()
 
@@ -569,12 +522,8 @@ re.on_draw_ui(function()
             RerollTracker.enabled = newValue
             if newValue then
                 start_new_session()
-                log.info("[RerollTracker] ENABLED")
             else
-                local nickname, total = finish_current_session()
-                if nickname then
-                    log.info(string.format("[RerollTracker] DISABLED - %s: %d attempts", nickname, total))
-                end
+                finish_current_session()
             end
         end
 
@@ -619,5 +568,3 @@ re.on_draw_ui(function()
         imgui.tree_pop()
     end
 end)
-
-log.info("[RerollTracker] Loaded successfully (v3.7)")
