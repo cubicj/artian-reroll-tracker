@@ -7,30 +7,30 @@
 
 ## 아키텍처 요약
 
-**파일**: `artian_reroll_tracker.lua` (571줄)
-**데이터**: `reframework/data/reroll_sessions.json`
+파일: `artian_reroll_tracker.lua` (571줄)
+데이터: `reframework/data/reroll_sessions.json`
 
 ### Hook 구조 (7개)
 
-| Hook | 대상 | 용도 |
-|------|------|------|
-| `getEm0078_ArtianBonusColor` | `app.GUI080000ArtianStatus` | Grinding Mode: 보너스 ID 캡처 (args[3] = List\<BONUS_ID>) + 무기 타입 캡처 (args[7]) |
-| `setWeaponDataCore` | `app.GUI080000ArtianStatus` | 속성/격화 타입 자동 감지 (GUI 텍스트 직접 읽기) |
-| `lotterySkill` | `app.Em0078_ArtianUtil` | Lottery Mode: Post Hook에서 BonusByCreating → ArtianSkillType 캡처 |
-| `startArtianGrindingAnim` | `app.GUI080000ArtianStatus` | Grinding Mode: 기록 트리거 + 애니메이션 스킵 (Action:Invoke → SKIP_ORIGINAL) |
-| `startSkillLotteryAnim` | `app.GUI080000ArtianStatus` | Lottery Mode: 기록 트리거 + 애니메이션 스킵 |
-| `startUpGrade` | `app.cGUILoopGaugeChangeRequirePoint` | 게이지 애니메이션 스킵 |
-| `requestNotifyWindow` | `app.cGUISystemModuleNotifyWindowApp` | 대화상자 자동 스킵 |
+| Hook                         | 대상                                  | 용도                                                                                 |
+| ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------ |
+| `getEm0078_ArtianBonusColor` | `app.GUI080000ArtianStatus`           | Grinding Mode: 보너스 ID 캡처 (args[3] = List\<BONUS_ID>) + 무기 타입 캡처 (args[7]) |
+| `setWeaponDataCore`          | `app.GUI080000ArtianStatus`           | 속성/격화 타입 자동 감지 (GUI 텍스트 직접 읽기)                                      |
+| `lotterySkill`               | `app.Em0078_ArtianUtil`               | Lottery Mode: Post Hook에서 BonusByCreating → ArtianSkillType 캡처                   |
+| `startArtianGrindingAnim`    | `app.GUI080000ArtianStatus`           | Grinding Mode: 기록 트리거 + 애니메이션 스킵 (Action:Invoke → SKIP_ORIGINAL)         |
+| `startSkillLotteryAnim`      | `app.GUI080000ArtianStatus`           | Lottery Mode: 기록 트리거 + 애니메이션 스킵                                          |
+| `startUpGrade`               | `app.cGUILoopGaugeChangeRequirePoint` | 게이지 애니메이션 스킵                                                               |
+| `requestNotifyWindow`        | `app.cGUISystemModuleNotifyWindowApp` | 대화상자 자동 스킵                                                                   |
 
 ### 대화상자 자동 스킵 대상
 
-| ID | selectedIndex | 설명 |
-|----|---------------|------|
-| `EQUIP_000` | 0 | 장비 확인 |
-| `EQUIPMENT_0008_15` | 0 | 장비 확인 |
-| `GUI080301_0005_DLG` | 0 | 확인 |
-| `GUI080301_0009_DLG` | 1 | "다시 리롤" 선택 |
-| `GUI080301_0010_DLG` | 1 | "다시 리롤" 선택 |
+| ID                   | selectedIndex | 설명             |
+| -------------------- | ------------- | ---------------- |
+| `EQUIP_000`          | 0             | 장비 확인        |
+| `EQUIPMENT_0008_15`  | 0             | 장비 확인        |
+| `GUI080301_0005_DLG` | 0             | 확인             |
+| `GUI080301_0009_DLG` | 1             | "다시 리롤" 선택 |
+| `GUI080301_0010_DLG` | 1             | "다시 리롤" 선택 |
 
 ---
 
@@ -38,17 +38,18 @@
 
 ### 1. Grinding Mode 데이터 캡처 (v3.0.0)
 
-**문제**: "다시 리롤" 선택 시 SaveData.BonusByGrinding이 업데이트되지 않아 동일한 값만 기록됨.
-**해결**: `getEm0078_ArtianBonusColor` Pre Hook에서 `args[3]` (List\<BONUS_ID>)를 직접 캡처. SaveData 변경 여부와 무관하게 항상 최신 값 포함.
+문제: "다시 리롤" 선택 시 SaveData.BonusByGrinding이 업데이트되지 않아 동일한 값만 기록됨.
+해결: `getEm0078_ArtianBonusColor` Pre Hook에서 `args[3]` (List\<BONUS_ID>)를 직접 캡처. SaveData 변경 여부와 무관하게 항상 최신 값 포함.
 
 ### 2. Lottery Mode 데이터 캡처 (v3.2.0)
 
-**문제**: 동일하게 "다시 리롤" 시 SaveData.BonusByCreating 미갱신.
-**해결**: `Em0078_ArtianUtil.lotterySkill(cEquipWork)` Post Hook에서 수정된 `BonusByCreating` 값 직접 읽기 → `decode_artian_skill_type()` → `ArtianSkillGroupData`에서 SeriesSkillId/GroupSkillId 매핑.
+문제: 동일하게 "다시 리롤" 시 SaveData.BonusByCreating 미갱신.
+해결: `Em0078_ArtianUtil.lotterySkill(cEquipWork)` Post Hook에서 수정된 `BonusByCreating` 값 직접 읽기 → `decode_artian_skill_type()` → `ArtianSkillGroupData`에서 SeriesSkillId/GroupSkillId 매핑.
 
 ### 3. 무기/속성/격화 자동 감지 (v3.6.0)
 
-**해결**: `setWeaponDataCore` Hook에서 GUI 텍스트 직접 읽기.
+해결: `setWeaponDataCore` Hook에서 GUI 텍스트 직접 읽기.
+
 - `_ArtianCreateTypeText:get_Message()` → 격화 타입 (예: "공격 격화 타입")
 - `_PerformanceText:get_Message()` → 속성 (예: "마비속성 타입")
 - 로컬라이제이션 불필요, 모든 언어 자동 지원.
@@ -125,6 +126,7 @@ ArtianSkillType → ArtianSkillGroupData._Values에서 조회
 ```
 
 Lottery Mode attempt 구조:
+
 ```json
 {
   "attemptNum": 1,
