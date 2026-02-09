@@ -14,7 +14,6 @@ RerollTracker._lastCapturedBonusIds = nil
 RerollTracker._lastCapturedSkillType = nil
 RerollTracker._lastCapturedWeaponType = nil
 RerollTracker._lastCapturedAttribute = nil
-RerollTracker._lastCapturedKagekiType = nil
 
 local TD_ArtianUtil = sdk.find_type_definition("app.ArtianUtil")
 local TD_Em0078ArtianUtil = sdk.find_type_definition("app.Em0078_ArtianUtil")
@@ -147,10 +146,39 @@ local function get_skill_names_from_artian_type(aSkillType)
     return seriesName, groupName
 end
 
+local function find_existing_session(weaponType, attribute)
+    for i, weapon in ipairs(RerollTracker.weapons) do
+        if weapon.weaponType == weaponType and weapon.attribute == attribute then
+            return i
+        end
+    end
+    return nil
+end
+
+local function save_current_session_to_weapons()
+    if not RerollTracker.currentSession then return end
+    if #RerollTracker.currentSession.attempts == 0 then return end
+    local existingIndex = find_existing_session(
+        RerollTracker.currentSession.weaponType,
+        RerollTracker.currentSession.attribute
+    )
+    if existingIndex then
+        RerollTracker.weapons[existingIndex] = RerollTracker.currentSession
+    else
+        table.insert(RerollTracker.weapons, RerollTracker.currentSession)
+    end
+end
+
 local function finish_current_session()
     if not RerollTracker.currentSession then return nil, 0 end
+    local totalAttempts = #RerollTracker.currentSession.attempts
+    if totalAttempts == 0 then
+        RerollTracker.currentSession = nil
+        RerollTracker.attemptCount = 0
+        return nil, 0
+    end
     RerollTracker.currentSession.endTime = os.date("%Y-%m-%d %H:%M:%S")
-    RerollTracker.currentSession.totalAttempts = #RerollTracker.currentSession.attempts
+    RerollTracker.currentSession.totalAttempts = totalAttempts
     table.insert(RerollTracker.weapons, RerollTracker.currentSession)
     local nickname = RerollTracker.currentSession.nickname
     local total = RerollTracker.currentSession.totalAttempts
@@ -170,7 +198,6 @@ local function start_new_session()
         weaponType = -1,
         weaponTypeName = "Unknown",
         attribute = "",
-        kagekiType = "",
         mode = modeName,
         startTime = os.date("%Y-%m-%d %H:%M:%S"),
         attempts = {}
@@ -182,23 +209,17 @@ local function check_and_update_session_weapon()
     if not RerollTracker.currentSession then return end
     local capturedType = RerollTracker._lastCapturedWeaponType
     local capturedAttribute = RerollTracker._lastCapturedAttribute or ""
-    local capturedKageki = RerollTracker._lastCapturedKagekiType or ""
     local sessionType = RerollTracker.currentSession.weaponType
     local sessionAttribute = RerollTracker.currentSession.attribute or ""
-    local sessionKageki = RerollTracker.currentSession.kagekiType or ""
     if sessionType == -1 or RerollTracker.currentSession.weaponTypeName == "Unknown" then
         if capturedType then
             local newTypeName = get_weapon_type_name(capturedType)
             RerollTracker.currentSession.weaponType = capturedType
             RerollTracker.currentSession.weaponTypeName = newTypeName
             RerollTracker.currentSession.attribute = capturedAttribute
-            RerollTracker.currentSession.kagekiType = capturedKageki
             local nickname = newTypeName
             if capturedAttribute ~= "" then
                 nickname = capturedAttribute .. " " .. nickname
-            end
-            if capturedKageki ~= "" then
-                nickname = capturedKageki .. " " .. nickname
             end
             RerollTracker.currentSession.nickname = nickname
         end
@@ -206,25 +227,38 @@ local function check_and_update_session_weapon()
     end
     local typeChanged = capturedType and capturedType ~= sessionType
     local attrChanged = capturedAttribute ~= "" and sessionAttribute ~= "" and capturedAttribute ~= sessionAttribute
-    local kagekiChanged = capturedKageki ~= "" and sessionKageki ~= "" and capturedKageki ~= sessionKageki
-    if typeChanged or attrChanged or kagekiChanged then
-        finish_current_session()
-        start_new_session()
+    if typeChanged or attrChanged then
+        save_current_session_to_weapons()
+        local existingIndex = find_existing_session(capturedType, capturedAttribute)
+        if existingIndex then
+            RerollTracker.currentSession = RerollTracker.weapons[existingIndex]
+            RerollTracker.attemptCount = #RerollTracker.currentSession.attempts
+            table.remove(RerollTracker.weapons, existingIndex)
+        else
+            local modeName = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
+            RerollTracker.currentSession = {
+                nickname = "Unknown",
+                weaponType = -1,
+                weaponTypeName = "Unknown",
+                attribute = "",
+                mode = modeName,
+                startTime = os.date("%Y-%m-%d %H:%M:%S"),
+                attempts = {}
+            }
+            RerollTracker.attemptCount = 0
+        end
         if capturedType then
             local newTypeName = get_weapon_type_name(capturedType)
             RerollTracker.currentSession.weaponType = capturedType
             RerollTracker.currentSession.weaponTypeName = newTypeName
             RerollTracker.currentSession.attribute = capturedAttribute
-            RerollTracker.currentSession.kagekiType = capturedKageki
             local nickname = newTypeName
             if capturedAttribute ~= "" then
                 nickname = capturedAttribute .. " " .. nickname
             end
-            if capturedKageki ~= "" then
-                nickname = capturedKageki .. " " .. nickname
-            end
             RerollTracker.currentSession.nickname = nickname
         end
+        RerollTracker.save_to_json()
     end
 end
 
@@ -265,14 +299,27 @@ end
 
 function RerollTracker.save_to_json()
     local success, err = pcall(function()
+        local weaponsToSave = {}
+        for _, weapon in ipairs(RerollTracker.weapons) do
+            local tempWeapon = {}
+            for k, v in pairs(weapon) do
+                tempWeapon[k] = v
+            end
+            table.insert(weaponsToSave, tempWeapon)
+        end
+        if RerollTracker.currentSession and #RerollTracker.currentSession.attempts > 0 then
+            local tempSession = {}
+            for k, v in pairs(RerollTracker.currentSession) do
+                tempSession[k] = v
+            end
+            tempSession.isCurrent = true
+            table.insert(weaponsToSave, tempSession)
+        end
         local data = {
             lastUpdated = os.date("%Y-%m-%d %H:%M:%S"),
             totalWeapons = #RerollTracker.weapons,
-            weapons = RerollTracker.weapons
+            weapons = weaponsToSave
         }
-        if RerollTracker.currentSession then
-            data.currentSession = RerollTracker.currentSession
-        end
         json.dump_file(RerollTracker.dataFilePath, data)
     end)
     if not success then
@@ -285,7 +332,16 @@ function RerollTracker.load_from_json()
         return json.load_file(RerollTracker.dataFilePath)
     end)
     if success and data then
-        RerollTracker.weapons = data.weapons or {}
+        RerollTracker.weapons = {}
+        for _, weapon in ipairs(data.weapons or {}) do
+            if weapon.isCurrent then
+                weapon.isCurrent = nil
+                RerollTracker.currentSession = weapon
+                RerollTracker.attemptCount = #weapon.attempts
+            else
+                table.insert(RerollTracker.weapons, weapon)
+            end
+        end
     end
 end
 
@@ -293,6 +349,10 @@ function RerollTracker.clear_history()
     RerollTracker.weapons = {}
     RerollTracker.currentSession = nil
     RerollTracker.attemptCount = 0
+    RerollTracker._lastCapturedBonusIds = nil
+    RerollTracker._lastCapturedSkillType = nil
+    RerollTracker._lastCapturedWeaponType = nil
+    RerollTracker._lastCapturedAttribute = nil
     RerollTracker.save_to_json()
     if RerollTracker.enabled then
         start_new_session()
@@ -320,7 +380,7 @@ if FN_LotterySkill then
                 end
             end)
             if not success then
-                log.error("[RerollTracker] lotterySkill hook error: " .. tostring(err))
+                log.error("[RerollTracker] lotterySkill post-hook error: " .. tostring(err))
             end
             return retval
         end
@@ -370,18 +430,40 @@ if TD_GUI080000ArtianStatus then
             local success, err = pcall(function()
                 local this = sdk.to_managed_object(args[2])
                 if this then
-                    local createTypeText = this:get_field("_ArtianCreateTypeText")
-                    if createTypeText then
-                        local kagekiName = createTypeText:call("get_Message")
-                        if kagekiName and kagekiName ~= "" then
-                            RerollTracker._lastCapturedKagekiType = kagekiName
-                        end
-                    end
                     local perfText = this:get_field("_PerformanceText")
                     if perfText then
                         local perfName = perfText:call("get_Message")
                         if perfName and perfName ~= "" then
                             RerollTracker._lastCapturedAttribute = perfName
+                        end
+                    end
+                end
+                local equipSet = sdk.to_managed_object(args[3])
+                if equipSet then
+                    local weaponData = equipSet:get_field("<WeaponData>k__BackingField")
+                    if weaponData then
+                        local weaponTypeMapping = {
+                            {name = "_LongSword", type = 3},
+                            {name = "_ShortSword", type = 1},
+                            {name = "_TwinSword", type = 2},
+                            {name = "_Tachi", type = 4},
+                            {name = "_Hammer", type = 5},
+                            {name = "_Whistle", type = 6},
+                            {name = "_Lance", type = 7},
+                            {name = "_GunLance", type = 8},
+                            {name = "_SlashAxe", type = 9},
+                            {name = "_ChargeAxe", type = 11},
+                            {name = "_Rod", type = 10},
+                            {name = "_Bow", type = 12},
+                            {name = "_HeavyBowgun", type = 14},
+                            {name = "_LightBowgun", type = 13}
+                        }
+                        for _, mapping in ipairs(weaponTypeMapping) do
+                            local value = weaponData:get_field(mapping.name)
+                            if value and value > 0 then
+                                RerollTracker._lastCapturedWeaponType = mapping.type
+                                break
+                            end
                         end
                     end
                 end
@@ -520,10 +602,8 @@ re.on_draw_ui(function()
         local changed, newValue = imgui.checkbox("Enable Tracker", RerollTracker.enabled)
         if changed then
             RerollTracker.enabled = newValue
-            if newValue then
+            if newValue and not RerollTracker.currentSession then
                 start_new_session()
-            else
-                finish_current_session()
             end
         end
 
