@@ -43,7 +43,7 @@ local function getEnumTables(typeDef)
     return byName, byValue
 end
 
-local notifyWindowName2ID, notifyWindowID2Name = getEnumTables(TD_NotifyWindowDef)
+local _, notifyWindowID2Name = getEnumTables(TD_NotifyWindowDef)
 
 local function get_bonus_name(bonusId)
     if not FN_GetBonusName or not FN_GetLocalizedMsg then
@@ -158,17 +158,13 @@ end
 local function save_current_session_to_weapons()
     if not RerollTracker.currentSession then return end
     if #RerollTracker.currentSession.attempts == 0 then return end
-    log.info(string.format("[RerollTracker:DEBUG] save_current_session_to_weapons: %s (%d attempts)",
-        RerollTracker.currentSession.nickname, #RerollTracker.currentSession.attempts))
     local existingIndex = find_existing_session(
         RerollTracker.currentSession.weaponType,
         RerollTracker.currentSession.attribute
     )
     if existingIndex then
-        log.info(string.format("[RerollTracker:DEBUG] Replacing existing session at index %d", existingIndex))
         RerollTracker.weapons[existingIndex] = RerollTracker.currentSession
     else
-        log.info("[RerollTracker:DEBUG] Inserting new session into weapons array")
         table.insert(RerollTracker.weapons, RerollTracker.currentSession)
     end
 end
@@ -196,7 +192,6 @@ local function start_new_session()
     if RerollTracker.currentSession then
         finish_current_session()
     end
-    log.info("[RerollTracker:DEBUG] start_new_session called")
     local modeName = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
     RerollTracker.currentSession = {
         nickname = "Unknown",
@@ -216,8 +211,6 @@ local function check_and_update_session_weapon()
     local capturedAttribute = RerollTracker._lastCapturedAttribute or ""
     local sessionType = RerollTracker.currentSession.weaponType
     local sessionAttribute = RerollTracker.currentSession.attribute or ""
-    log.info(string.format("[RerollTracker:DEBUG] check_and_update_session_weapon: captured(type:%s, attr:%s) vs session(type:%s, attr:%s)",
-        tostring(capturedType), capturedAttribute, tostring(sessionType), sessionAttribute))
     if sessionType == -1 or RerollTracker.currentSession.weaponTypeName == "Unknown" then
         if capturedType then
             local newTypeName = get_weapon_type_name(capturedType)
@@ -234,19 +227,14 @@ local function check_and_update_session_weapon()
     end
     local typeChanged = capturedType and capturedType ~= sessionType
     local attrChanged = capturedAttribute ~= "" and sessionAttribute ~= "" and capturedAttribute ~= sessionAttribute
-    log.info(string.format("[RerollTracker:DEBUG] typeChanged=%s, attrChanged=%s", tostring(typeChanged), tostring(attrChanged)))
     if typeChanged or attrChanged then
-        log.info("[RerollTracker:DEBUG] Session change detected, saving current session")
         save_current_session_to_weapons()
         local existingIndex = find_existing_session(capturedType, capturedAttribute)
         if existingIndex then
-            log.info(string.format("[RerollTracker:DEBUG] Restoring existing session at index %d with %d attempts",
-                existingIndex, #RerollTracker.weapons[existingIndex].attempts))
             RerollTracker.currentSession = RerollTracker.weapons[existingIndex]
             RerollTracker.attemptCount = #RerollTracker.currentSession.attempts
             table.remove(RerollTracker.weapons, existingIndex)
         else
-            log.info("[RerollTracker:DEBUG] Creating new session (no existing session found)")
             local modeName = RerollTracker.trackingMode == RerollTracker.MODE_GRINDING and "grinding" or "lottery"
             RerollTracker.currentSession = {
                 nickname = "Unknown",
@@ -277,9 +265,6 @@ end
 local function record_attempt(bonusIds)
     if not RerollTracker.enabled or not RerollTracker.currentSession then return end
     if #bonusIds == 0 then return end
-    log.info(string.format("[RerollTracker:DEBUG] record_attempt: current weapon=%s, type=%s, attr=%s",
-        RerollTracker.currentSession.nickname, tostring(RerollTracker.currentSession.weaponType),
-        RerollTracker.currentSession.attribute))
     check_and_update_session_weapon()
     RerollTracker.attemptCount = RerollTracker.attemptCount + 1
     local bonusNames = {}
@@ -298,9 +283,6 @@ end
 local function record_skill_attempt(seriesSkill, groupSkill)
     if not RerollTracker.enabled or not RerollTracker.currentSession then return end
     if not seriesSkill or seriesSkill == "" then return end
-    log.info(string.format("[RerollTracker:DEBUG] record_skill_attempt: current weapon=%s, type=%s, attr=%s",
-        RerollTracker.currentSession.nickname, tostring(RerollTracker.currentSession.weaponType),
-        RerollTracker.currentSession.attribute))
     check_and_update_session_weapon()
     RerollTracker.attemptCount = RerollTracker.attemptCount + 1
     local attempt = {
@@ -350,12 +332,9 @@ function RerollTracker.load_from_json()
         return json.load_file(RerollTracker.dataFilePath)
     end)
     if success and data then
-        log.info("[RerollTracker:DEBUG] load_from_json: Loading data from JSON")
         RerollTracker.weapons = {}
         for _, weapon in ipairs(data.weapons or {}) do
             if weapon.isCurrent then
-                log.info(string.format("[RerollTracker:DEBUG] load_from_json: Restoring currentSession - %s (type:%s, attr:%s, %d attempts)",
-                    weapon.nickname, tostring(weapon.weaponType), weapon.attribute, #weapon.attempts))
                 weapon.isCurrent = nil
                 RerollTracker.currentSession = weapon
                 RerollTracker.attemptCount = #weapon.attempts
@@ -363,7 +342,6 @@ function RerollTracker.load_from_json()
                 table.insert(RerollTracker.weapons, weapon)
             end
         end
-        log.info(string.format("[RerollTracker:DEBUG] load_from_json: Loaded %d weapon sessions", #RerollTracker.weapons))
     end
 end
 
@@ -435,8 +413,6 @@ if TD_GUI080000ArtianStatus then
                 if weaponTypeArg then
                     local weaponType = sdk.to_int64(weaponTypeArg) & 0xFFFFFFFF
                     if weaponType and weaponType >= 0 and weaponType <= 15 then
-                        log.info(string.format("[RerollTracker:DEBUG] getEm0078_ArtianBonusColor captured weaponType: %d (was: %s)",
-                            weaponType, tostring(RerollTracker._lastCapturedWeaponType)))
                         RerollTracker._lastCapturedWeaponType = weaponType
                     end
                 end
@@ -458,8 +434,6 @@ if TD_GUI080000ArtianStatus then
                     if perfText then
                         local perfName = perfText:call("get_Message")
                         if perfName and perfName ~= "" then
-                            log.info(string.format("[RerollTracker:DEBUG] setWeaponDataCore captured attribute: %s (was: %s)",
-                                perfName, tostring(RerollTracker._lastCapturedAttribute)))
                             RerollTracker._lastCapturedAttribute = perfName
                         end
                     end
@@ -487,8 +461,6 @@ if TD_GUI080000ArtianStatus then
                         for _, mapping in ipairs(weaponTypeMapping) do
                             local value = weaponData:get_field(mapping.name)
                             if value and value > 0 then
-                                log.info(string.format("[RerollTracker:DEBUG] setWeaponDataCore captured weaponType: %d (%s, was: %s)",
-                                    mapping.type, mapping.name, tostring(RerollTracker._lastCapturedWeaponType)))
                                 RerollTracker._lastCapturedWeaponType = mapping.type
                                 break
                             end
@@ -569,7 +541,6 @@ if TD_LoopGaugeChangeRequirePoint then
             if not RerollTracker.enabled then
                 return sdk.PreHookResult.CALL_ORIGINAL
             end
-            log.info("[RerollTracker:DEBUG] startUpGrade hook triggered (Kageki upgrade animation)")
             local success, err = pcall(function()
                 local action = sdk.to_managed_object(args[4])
                 if action then
