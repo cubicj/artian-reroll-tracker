@@ -92,7 +92,7 @@ Data is saved to: `reframework/data/reroll_sessions.json`
 
 ## Version
 
-v3.7.1
+v3.11.1
 
 ## Author
 
