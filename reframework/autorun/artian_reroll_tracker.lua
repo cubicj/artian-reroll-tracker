@@ -571,13 +571,18 @@ re.on_draw_ui(function()
 
         if RerollTracker.enabled then
             imgui.text_colored("Status: ACTIVE", 0xFF00FF00)
-            if RerollTracker.currentSession then
+            if RerollTracker.currentSession and RerollTracker.currentSession.nickname and RerollTracker.currentSession.attempts then
                 local modeText = RerollTracker.currentSession.mode == "grinding" and "Grinding" or "Lottery"
                 imgui.same_line()
-                imgui.text(string.format("| %s | %s | Attempts: %d",
-                    modeText,
-                    RerollTracker.currentSession.nickname,
-                    #RerollTracker.currentSession.attempts))
+                local success, result = pcall(function()
+                    return string.format("| %s | %s | Attempts: %d",
+                        modeText,
+                        RerollTracker.currentSession.nickname or "Unknown",
+                        type(RerollTracker.currentSession.attempts) == "table" and #RerollTracker.currentSession.attempts or 0)
+                end)
+                if success then
+                    imgui.text(result)
+                end
             end
         else
             imgui.text_colored("Status: INACTIVE", 0xFF888888)
@@ -587,9 +592,14 @@ re.on_draw_ui(function()
         imgui.separator()
         imgui.spacing()
 
-        if RerollTracker.currentSession then
+        if RerollTracker.currentSession and RerollTracker.currentSession.nickname then
             imgui.text("Current:")
-            imgui.text(string.format("  %s", RerollTracker.currentSession.nickname))
+            local success, result = pcall(function()
+                return string.format("  %s", RerollTracker.currentSession.nickname or "Unknown")
+            end)
+            if success then
+                imgui.text(result)
+            end
         else
             imgui.text_colored("Weapon: (Auto-detected on first action)", 0xFF888888)
         end
@@ -602,8 +612,20 @@ re.on_draw_ui(function()
         end
 
         imgui.spacing()
-        imgui.text(string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath))
-        imgui.text(string.format("Total weapons recorded: %d", #RerollTracker.weapons))
+        local success, result = pcall(function()
+            return string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath or "unknown")
+        end)
+        if success then
+            imgui.text(result)
+        end
+
+        success, result = pcall(function()
+            return string.format("Total weapons recorded: %d",
+                type(RerollTracker.weapons) == "table" and #RerollTracker.weapons or 0)
+        end)
+        if success then
+            imgui.text(result)
+        end
 
         imgui.tree_pop()
     end
