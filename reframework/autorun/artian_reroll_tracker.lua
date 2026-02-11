@@ -101,9 +101,6 @@ local function init_artian_skill_data()
         end
         ArtianSkillDataInited = true
     end)
-    if not success then
-        log.error("[RerollTracker] init_artian_skill_data error: " .. tostring(err))
-    end
 end
 
 local TD_MessageUtil = sdk.find_type_definition("app.MessageUtil")
@@ -322,9 +319,6 @@ function RerollTracker.save_to_json()
         }
         json.dump_file(RerollTracker.dataFilePath, data)
     end)
-    if not success then
-        log.error("[RerollTracker] JSON save failed: " .. tostring(err))
-    end
 end
 
 function RerollTracker.load_from_json()
@@ -379,9 +373,6 @@ if FN_LotterySkill then
                     end
                 end
             end)
-            if not success then
-                log.error("[RerollTracker] lotterySkill post-hook error: " .. tostring(err))
-            end
             return retval
         end
     )
@@ -417,9 +408,6 @@ if TD_GUI080000ArtianStatus then
                     end
                 end
             end)
-            if not success then
-                log.error("[RerollTracker] getEm0078_ArtianBonusColor hook error: " .. tostring(err))
-            end
         end, nil)
     end
 
@@ -442,35 +430,13 @@ if TD_GUI080000ArtianStatus then
                 if equipSet then
                     local weaponData = equipSet:get_field("<WeaponData>k__BackingField")
                     if weaponData then
-                        local weaponTypeMapping = {
-                            {name = "_LongSword", type = 3},
-                            {name = "_ShortSword", type = 1},
-                            {name = "_TwinSword", type = 2},
-                            {name = "_Tachi", type = 4},
-                            {name = "_Hammer", type = 5},
-                            {name = "_Whistle", type = 6},
-                            {name = "_Lance", type = 7},
-                            {name = "_GunLance", type = 8},
-                            {name = "_SlashAxe", type = 9},
-                            {name = "_ChargeAxe", type = 11},
-                            {name = "_Rod", type = 10},
-                            {name = "_Bow", type = 12},
-                            {name = "_HeavyBowgun", type = 14},
-                            {name = "_LightBowgun", type = 13}
-                        }
-                        for _, mapping in ipairs(weaponTypeMapping) do
-                            local value = weaponData:get_field(mapping.name)
-                            if value and value > 0 then
-                                RerollTracker._lastCapturedWeaponType = mapping.type
-                                break
-                            end
+                        local weaponType = weaponData:get_field("_Type")
+                        if weaponType and weaponType >= 0 and weaponType <= 15 then
+                            RerollTracker._lastCapturedWeaponType = weaponType
                         end
                     end
                 end
             end)
-            if not success then
-                log.error("[RerollTracker] setWeaponDataCore hook error: " .. tostring(err))
-            end
         end, nil)
     end
 
@@ -496,7 +462,6 @@ if TD_GUI080000ArtianStatus then
                 end
             end)
             if not success then
-                log.error("[RerollTracker] startArtianGrindingAnim hook error: " .. tostring(err))
                 return sdk.PreHookResult.CALL_ORIGINAL
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
@@ -526,7 +491,6 @@ if TD_GUI080000ArtianStatus then
                 end
             end)
             if not success then
-                log.error("[RerollTracker] startSkillLotteryAnim hook error: " .. tostring(err))
                 return sdk.PreHookResult.CALL_ORIGINAL
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
@@ -548,7 +512,6 @@ if TD_LoopGaugeChangeRequirePoint then
                 end
             end)
             if not success then
-                log.error("[RerollTracker] startUpGrade hook error: " .. tostring(err))
                 return sdk.PreHookResult.CALL_ORIGINAL
             end
             return sdk.PreHookResult.SKIP_ORIGINAL
@@ -587,9 +550,6 @@ if TD_NotifyWindow then
                     return sdk.PreHookResult.SKIP_ORIGINAL
                 end
             end)
-            if not success then
-                log.error("[RerollTracker] Dialog hook error: " .. tostring(result))
-            end
             return result
         end, nil)
     end
