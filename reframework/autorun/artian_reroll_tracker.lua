@@ -20,9 +20,12 @@ local TD_WeaponDefType = sdk.find_type_definition("app.WeaponDef.TYPE")
 local TD_WeaponDefTypeFixed = sdk.find_type_definition("app.WeaponDef.TYPE_Fixed")
 local TD_MessageUtil = sdk.find_type_definition("app.MessageUtil")
 
+local TD_BonusId = sdk.find_type_definition("app.ArtianDef.BONUS_ID")
+local TD_BonusIdFixed = sdk.find_type_definition("app.ArtianDef.BONUS_ID_Fixed")
 local FN_GetBonusName = TD_ArtianUtil and TD_ArtianUtil:get_method("Name(app.ArtianDef.BONUS_ID)")
 local FN_GetLocalizedMsg = TD_GuiMessage and TD_GuiMessage:get_method("get(System.Guid)")
 local FN_LotterySkill = TD_Em0078ArtianUtil and TD_Em0078ArtianUtil:get_method("lotterySkill(app.savedata.cEquipWork)")
+local FN_LotteryCreateBonus = TD_Em0078ArtianUtil and TD_Em0078ArtianUtil:get_method("lotteryCreateBonus(app.user_data.WeaponData.cData, app.savedata.cEquipWork, System.Boolean)")
 local FN_GetWeaponTypeName = TD_WeaponUtil and TD_WeaponUtil:get_method("getWeaponTypeName(app.WeaponDef.TYPE)")
 local FN_GetSkillName = TD_MessageUtil and TD_MessageUtil:get_method("getHunterSkillName(app.HunterDef.Skill)")
 
@@ -47,6 +50,7 @@ end
 local _, notifyWindowID2Name = getEnumTables(TD_NotifyWindowDef)
 
 local fixedToTypeMap = {}
+local fixedToBonusIdMap = {}
 
 do
     local weaponByName = getEnumTables(TD_WeaponDefType)
@@ -54,6 +58,14 @@ do
     for name, fixedValue in pairs(fixedByName) do
         if name ~= "INVALID" and name ~= "MAX" and weaponByName[name] ~= nil then
             fixedToTypeMap[fixedValue] = weaponByName[name]
+        end
+    end
+
+    local bonusByName = getEnumTables(TD_BonusId)
+    local bonusFixedByName = getEnumTables(TD_BonusIdFixed)
+    for name, fixedValue in pairs(bonusFixedByName) do
+        if name ~= "INVALID" and name ~= "MAX" and bonusByName[name] ~= nil then
+            fixedToBonusIdMap[fixedValue] = bonusByName[name]
         end
     end
 end
@@ -143,6 +155,21 @@ local function decode_artian_skill_type(bonusByCreating)
     return asThird * 100 + asSecond * 10 + asFirst
 end
 
+local function decode_grinding_bonuses(bonusByGrinding)
+    if not bonusByGrinding or bonusByGrinding <= 0 then return {} end
+    local bonusIds = {}
+    local remaining = bonusByGrinding
+    for _ = 1, 5 do
+        local rawId = remaining % 1000
+        if rawId > 0 then
+            local bonusId = fixedToBonusIdMap[rawId] or rawId
+            table.insert(bonusIds, bonusId)
+        end
+        remaining = math.floor(remaining / 1000)
+    end
+    return bonusIds
+end
+
 local function get_skill_names_from_artian_type(aSkillType)
     init_artian_skill_data()
     if not ArtianSkillData or not ArtianSkillData[aSkillType] then
@@ -163,11 +190,10 @@ local RerollTracker = {
     attemptCount = 0,
     dataFilePath = "reroll_sessions.json",
     trackingMode = MODE_GRINDING,
-    _lastCapturedBonusIds = nil,
-    _lastCapturedSkillType = nil,
     _lastCapturedWeaponType = nil,
     _lastCapturedAttribute = nil,
     _lotterySkillEquipWork = nil,
+    _grindingEquipWork = nil,
 }
 
 local function create_session_template(modeName)
@@ -238,10 +264,21 @@ local function start_new_session()
 end
 
 local function reset_all_captured()
-    RerollTracker._lastCapturedBonusIds = nil
-    RerollTracker._lastCapturedSkillType = nil
     RerollTracker._lastCapturedWeaponType = nil
     RerollTracker._lastCapturedAttribute = nil
+    RerollTracker._lotterySkillEquipWork = nil
+    RerollTracker._grindingEquipWork = nil
+end
+
+local function ensure_session_mode(targetMode)
+    if not RerollTracker.currentSession then
+        RerollTracker.trackingMode = targetMode
+        start_new_session()
+    elseif RerollTracker.currentSession.mode ~= (targetMode == MODE_GRINDING and "grinding" or "lottery") then
+        finish_current_session()
+        RerollTracker.trackingMode = targetMode
+        start_new_session()
+    end
 end
 
 local function check_and_update_session_weapon(capturedType, capturedAttribute)
@@ -382,48 +419,40 @@ local function on_lottery_skill_post(retval)
         local bonusByCreating = equipWork:get_field("BonusByCreating")
         if not bonusByCreating or bonusByCreating <= 0 then return end
         local aSkillType = decode_artian_skill_type(bonusByCreating)
-        if aSkillType and aSkillType > 0 then
-            RerollTracker._lastCapturedSkillType = aSkillType
-        end
+        if not aSkillType or aSkillType <= 0 then return end
+        ensure_session_mode(MODE_LOTTERY)
+        local seriesSkill, groupSkill = get_skill_names_from_artian_type(aSkillType)
+        record_skill_attempt(seriesSkill, groupSkill)
     end)
     if not ok then log.error(TAG .. " lotterySkill error: " .. tostring(err)) end
+    RerollTracker._lotterySkillEquipWork = nil
     return retval
 end
 
-local function on_bonus_color_pre(args)
+local function on_lottery_create_bonus_pre(args)
     if not RerollTracker.enabled then return end
+    RerollTracker._grindingEquipWork = args[3]
+end
+
+local function on_lottery_create_bonus_post(retval)
+    if not RerollTracker.enabled then return retval end
     local ok, err = pcall(function()
-        local newBonusList = sdk.to_managed_object(args[3])
-        if not newBonusList then return end
-        local count = newBonusList:call("get_Count")
-        if not count or count <= 0 then return end
-        local bonusIds = {}
-        for i = 0, count - 1 do
-            local bonusId = newBonusList:call("get_Item", i)
-            if bonusId and bonusId > 0 then
-                table.insert(bonusIds, bonusId)
-            end
-        end
-        if #bonusIds > 0 then
-            RerollTracker._lastCapturedBonusIds = bonusIds
-        end
+        local equipWork = sdk.to_managed_object(RerollTracker._grindingEquipWork)
+        if not equipWork then return end
+        local bonusByGrinding = equipWork:get_field("BonusByGrinding")
+        local bonusIds = decode_grinding_bonuses(bonusByGrinding)
+        if #bonusIds == 0 then return end
+        ensure_session_mode(MODE_GRINDING)
+        record_attempt(bonusIds)
     end)
-    if not ok then log.error(TAG .. " bonusColor error: " .. tostring(err)) end
+    if not ok then log.error(TAG .. " lotteryCreateBonus error: " .. tostring(err)) end
+    RerollTracker._grindingEquipWork = nil
+    return retval
 end
 
 local function on_set_weapon_data_core_pre(args)
     if not RerollTracker.enabled then return end
     local ok, err = pcall(function()
-        local this = sdk.to_managed_object(args[2])
-        if this then
-            local perfText = this:get_field("_PerformanceText")
-            if perfText then
-                local perfName = perfText:call("get_Message")
-                if perfName and perfName ~= "" then
-                    RerollTracker._lastCapturedAttribute = perfName
-                end
-            end
-        end
         local equipSet = sdk.to_managed_object(args[3])
         if not equipSet then return end
         local weaponData = equipSet:get_field("<WeaponData>k__BackingField")
@@ -436,6 +465,16 @@ local function on_set_weapon_data_core_pre(args)
         if weaponType and weaponType >= 0 and weaponType <= 13 then
             RerollTracker._lastCapturedWeaponType = weaponType
         end
+        local this = sdk.to_managed_object(args[2])
+        if this then
+            local perfText = this:get_field("_PerformanceText")
+            if perfText then
+                local perfName = perfText:call("get_Message")
+                if perfName and perfName ~= "" then
+                    RerollTracker._lastCapturedAttribute = perfName
+                end
+            end
+        end
     end)
     if not ok then log.error(TAG .. " setWeaponDataCore error: " .. tostring(err)) end
 end
@@ -445,18 +484,8 @@ local function on_grinding_anim_pre(args)
         return sdk.PreHookResult.CALL_ORIGINAL
     end
     local ok, err = pcall(function()
-        local bonusIds = RerollTracker._lastCapturedBonusIds
-        RerollTracker._lastCapturedBonusIds = nil
-        if RerollTracker.currentSession and RerollTracker.currentSession.mode ~= "grinding" then
-            finish_current_session()
-            RerollTracker.trackingMode = MODE_GRINDING
-            start_new_session()
-        end
         local action = sdk.to_managed_object(args[3])
         if action then action:Invoke() end
-        if bonusIds and #bonusIds > 0 then
-            record_attempt(bonusIds)
-        end
     end)
     if not ok then
         log.error(TAG .. " grinding error: " .. tostring(err))
@@ -470,19 +499,8 @@ local function on_lottery_anim_pre(args)
         return sdk.PreHookResult.CALL_ORIGINAL
     end
     local ok, err = pcall(function()
-        local skillType = RerollTracker._lastCapturedSkillType
-        RerollTracker._lastCapturedSkillType = nil
-        if RerollTracker.currentSession and RerollTracker.currentSession.mode ~= "lottery" then
-            finish_current_session()
-            RerollTracker.trackingMode = MODE_LOTTERY
-            start_new_session()
-        end
         local action = sdk.to_managed_object(args[3])
         if action then action:Invoke() end
-        if skillType and skillType > 0 then
-            local seriesSkill, groupSkill = get_skill_names_from_artian_type(skillType)
-            record_skill_attempt(seriesSkill, groupSkill)
-        end
     end)
     if not ok then
         log.error(TAG .. " lottery error: " .. tostring(err))
@@ -548,45 +566,36 @@ end
 -- ============================================================================
 
 local function register_hooks()
+    local function try_hook(label, typeDef, methodName, preFn, postFn)
+        if not typeDef then
+            log.error(TAG .. " HOOK FAIL [" .. label .. "] typeDef is nil")
+            return
+        end
+        local method = typeDef:get_method(methodName)
+        if not method then
+            log.error(TAG .. " HOOK FAIL [" .. label .. "] method not found: " .. methodName)
+            return
+        end
+        sdk.hook(method, preFn, postFn)
+    end
+
     if FN_LotterySkill then
         sdk.hook(FN_LotterySkill, on_lottery_skill_pre, on_lottery_skill_post)
+    else
+        log.error(TAG .. " HOOK FAIL [lotterySkill] FN_LotterySkill is nil")
     end
 
-    if TD_GUI080000ArtianStatus then
-        local bonusColorMethod = TD_GUI080000ArtianStatus:get_method("getEm0078_ArtianBonusColor")
-        if bonusColorMethod then
-            sdk.hook(bonusColorMethod, on_bonus_color_pre, nil)
-        end
-
-        local setWeaponDataCoreMethod = TD_GUI080000ArtianStatus:get_method("setWeaponDataCore(app.EquipDef.EquipSet)")
-        if setWeaponDataCoreMethod then
-            sdk.hook(setWeaponDataCoreMethod, on_set_weapon_data_core_pre, nil)
-        end
-
-        local grindingMethod = TD_GUI080000ArtianStatus:get_method("startArtianGrindingAnim(System.Action)")
-        if grindingMethod then
-            sdk.hook(grindingMethod, on_grinding_anim_pre, nil)
-        end
-
-        local lotteryMethod = TD_GUI080000ArtianStatus:get_method("startSkillLotteryAnim(System.Action)")
-        if lotteryMethod then
-            sdk.hook(lotteryMethod, on_lottery_anim_pre, nil)
-        end
+    if FN_LotteryCreateBonus then
+        sdk.hook(FN_LotteryCreateBonus, on_lottery_create_bonus_pre, on_lottery_create_bonus_post)
+    else
+        log.error(TAG .. " HOOK FAIL [lotteryCreateBonus] FN_LotteryCreateBonus is nil")
     end
 
-    if TD_LoopGaugeChangeRequirePoint then
-        local method = TD_LoopGaugeChangeRequirePoint:get_method("startUpGrade(System.UInt32, System.Action)")
-        if method then
-            sdk.hook(method, on_start_upgrade_pre, nil)
-        end
-    end
-
-    if TD_NotifyWindow then
-        local method = TD_NotifyWindow:get_method("requestNotifyWindow")
-        if method then
-            sdk.hook(method, on_notify_window_pre, nil)
-        end
-    end
+    try_hook("setWeaponDataCore", TD_GUI080000ArtianStatus, "setWeaponDataCore(app.EquipDef.EquipSet)", on_set_weapon_data_core_pre, nil)
+    try_hook("grindingAnim", TD_GUI080000ArtianStatus, "startArtianGrindingAnim(System.Action)", on_grinding_anim_pre, nil)
+    try_hook("lotteryAnim", TD_GUI080000ArtianStatus, "startSkillLotteryAnim(System.Action)", on_lottery_anim_pre, nil)
+    try_hook("startUpGrade", TD_LoopGaugeChangeRequirePoint, "startUpGrade(System.UInt32, System.Action)", on_start_upgrade_pre, nil)
+    try_hook("notifyWindow", TD_NotifyWindow, "requestNotifyWindow", on_notify_window_pre, nil)
 end
 
 -- ============================================================================
