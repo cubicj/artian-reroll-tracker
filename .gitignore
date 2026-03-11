@@ -1,1 +1,5 @@
 TRACKER.md
+*.zip
+*.log
+.vs/
+.vscode/

@@ -1,51 +1,73 @@
 # Artian Reroll Tracker
 
-Gogmazios Artian weapon refinement and skill lottery tracker for Monster Hunter Wilds.
+[![Nexus Mods](https://img.shields.io/badge/Nexus%20Mods-Artian%20Reroll%20Tracker-orange)](https://www.nexusmods.com/monsterhunterwilds/mods/3902)
+
+Gogmazios Artian weapon refinement and skill lottery tracker for **Monster Hunter Wilds**.
+
+Track every reroll attempt, skip animations for faster grinding, and export results to JSON for analysis.
 
 ## Features
 
-- **Grinding Mode**: Tracks 5 bonus options from weapon grinding
-- **Lottery Mode**: Tracks skill lottery results (Series/Group skills)
-- Auto-detects weapon type, attribute, and Kageki type
-- Animation skip for faster rerolling (~0.5-0.6 seconds per attempt)
-- Auto-skip confirmation dialogs
-- Auto session management (detects weapon changes mid-session)
-- JSON export for data analysis
+- **Grinding Mode** — Tracks all 5 bonus options from Gog Restoration Enhancement
+- **Lottery Mode** — Tracks Skill Reassignment results (Series / Group skills)
+- **Animation Skip** — Skips reroll animations for faster iteration (~0.5s per attempt)
+- **Auto-skip Dialogs** — Automatically confirms reroll dialogs
+- **Auto Detection** — Detects weapon type, attribute, and Kageki type automatically
+- **Session Management** — Auto-switches sessions when you change weapons mid-reroll
+- **JSON Export** — All data saved to JSON for external analysis
 
 ## Requirements
 
-- REFramework
+- [REFramework](https://www.nexusmods.com/monsterhunterwilds/mods/39)
 - Monster Hunter Wilds
+
+## Installation
+
+1. Install REFramework if you haven't already
+2. Extract the mod archive into your Monster Hunter Wilds game directory
+3. The file structure should be: `<game folder>/reframework/autorun/artian_reroll_tracker.lua`
 
 ## Usage
 
-1. Open REFramework menu (Insert key)
-2. Find "Artian Reroll Tracker" section
-3. Check "Enable Tracker" to start tracking
-4. Perform grinding or skill lottery actions
-5. Uncheck to stop and save session
+1. Open REFramework menu (`Insert` key)
+2. Find **Artian Reroll Tracker** section
+3. Check **Enable Tracker** to start
+4. Perform Gog Restoration Enhancement or Skill Reassignment
+5. Uncheck to stop — session saves automatically
+
+### Recommended Workflow
+
+1. **Save your game** before starting rerolls
+2. Enable Tracker
+3. Reroll until materials run out
+4. Disable Tracker and check the JSON output
+5. If you found a good combination, note the attempt number
+6. **Reload your save** and perform exactly that many attempts
 
 ## Auto Detection
 
-The tracker automatically detects:
-- Weapon type (Great Sword, Long Sword, etc.)
-- Attribute type (Fire, Water, Paralysis, etc.)
-- Kageki type (Attack Kageki, Element Kageki, etc.)
+The tracker automatically detects and groups sessions by:
 
-If you change weapons mid-session, a new session automatically starts.
+| Field | Example |
+|-------|---------|
+| Weapon Type | Great Sword, Long Sword, Sword & Shield, etc. |
+| Attribute | Fire, Water, Paralysis, etc. |
+
+If you switch to a different weapon mid-session, a new session starts automatically. Switching back restores the previous session.
 
 ## JSON Output
 
-Data is saved to: `reframework/data/reroll_sessions.json`
+Data is saved to `reframework/data/reroll_sessions.json`.
 
-### Grinding Mode Example
+<details>
+<summary>Grinding Mode Example</summary>
+
 ```json
 {
-  "nickname": "Attack Kageki Type Paralysis Type Sword & Shield",
+  "nickname": "Paralysis Type Sword & Shield",
   "weaponType": 1,
   "weaponTypeName": "Sword & Shield",
   "attribute": "Paralysis Type",
-  "kagekiType": "Attack Kageki Type",
   "mode": "grinding",
   "attempts": [
     {
@@ -57,9 +79,14 @@ Data is saved to: `reframework/data/reroll_sessions.json`
 }
 ```
 
-### Lottery Mode Example
+</details>
+
+<details>
+<summary>Lottery Mode Example</summary>
+
 ```json
 {
+  "nickname": "Paralysis Type Sword & Shield",
   "mode": "lottery",
   "attempts": [
     {
@@ -74,26 +101,18 @@ Data is saved to: `reframework/data/reroll_sessions.json`
 }
 ```
 
-## Workflow
-
-1. Prepare artian weapon for grinding/lottery
-2. Enable Tracker
-3. Perform actions until materials run out
-4. Disable Tracker (session saves automatically)
-5. Analyze JSON file
-6. If desired combination found, note the attempt number
-7. Reload save and perform that many attempts
+</details>
 
 ## Notes
 
-- Tracker only activates when enabled
-- No impact on other mods when disabled
-- Multiplayer safe (local data only)
+- No performance impact when disabled
+- Multiplayer safe (local tracking only)
+- Does not modify any game data — only reads and records results
 
-## Version
+## License
 
-v3.11.1
+[MIT](LICENSE)
 
 ## Author
 
-JCubic
+**JCubic** — [Nexus Mods](https://www.nexusmods.com/monsterhunterwilds/mods/3902)
