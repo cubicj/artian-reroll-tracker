@@ -180,6 +180,15 @@ function _M.register_ui()
             if FW.hideUnchecked then
                 imgui.pop_style_color(1)
             end
+            imgui.same_line()
+            if imgui.button("Reset##gf") then
+                FW.weaponComboIdx = 1
+                FW.filters = {}
+                FW.selected = {}
+                FW.hideUnchecked = false
+                FW.dirty = true
+                _M.collect_results()
+            end
             imgui.spacing()
             imgui.text(string.format("Results: %d / %d attempts", #results, FW.totalAttempts))
 

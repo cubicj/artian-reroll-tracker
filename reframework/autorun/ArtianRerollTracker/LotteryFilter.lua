@@ -191,6 +191,16 @@ function _M.register_ui()
             if LW.hideUnchecked then
                 imgui.pop_style_color(1)
             end
+            imgui.same_line()
+            if imgui.button("Reset##lf") then
+                LW.weaponComboIdx = 1
+                LW.groupSelected = {}
+                LW.seriesSelected = {}
+                LW.selected = {}
+                LW.hideUnchecked = false
+                LW.dirty = true
+                _M.collect_results()
+            end
             imgui.spacing()
             imgui.text(string.format("Results: %d / %d attempts", #results, LW.totalAttempts))
 
