@@ -28,7 +28,7 @@ local function draw_filter_row(label, currentValue)
     for _, opt in ipairs(Sdk.FILTER_OPTIONS) do
         local isSelected = (currentValue == opt.value)
         if isSelected then
-            imgui.push_style_color(21, 0xFFCC8844)
+            imgui.push_style_color(21, 0xFF557744)
         end
         if imgui.button(opt.label .. "##" .. label, Sdk.FILTER_BTN_SIZE) then
             newValue = opt.value
