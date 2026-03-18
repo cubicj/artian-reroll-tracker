@@ -70,6 +70,65 @@ do
     end
 end
 
+local CATEGORY_KEYWORDS = nil
+local CATEGORY_BONUS_IDS = {}
+
+local CATEGORY_PATTERNS = {
+    ATTACK = "ATTACK",
+    AFFINITY = "CRITICAL",
+    SHARPNESS = "SHARP",
+    ELEMENT = "ELEMENT",
+}
+
+do
+    local bonusByName = getEnumTables(TD_BonusId)
+    for category, pattern in pairs(CATEGORY_PATTERNS) do
+        for name, value in pairs(bonusByName) do
+            if name:find(pattern) and not CATEGORY_BONUS_IDS[category] then
+                CATEGORY_BONUS_IDS[category] = value
+            end
+        end
+    end
+end
+
+local function resolve_category_keywords()
+    if CATEGORY_KEYWORDS then return true end
+    local keywords = {}
+    local resolved = 0
+    for category, bonusId in pairs(CATEGORY_BONUS_IDS) do
+        local fullName = get_bonus_name(bonusId)
+        if fullName and fullName ~= "" and not fullName:find("Bonus_") then
+            local baseName = fullName:gsub("[ⅠⅡⅢ]+$", ""):gsub("EX$", ""):gsub("%s+$", "")
+            keywords[category] = baseName
+            resolved = resolved + 1
+        end
+    end
+    local expected = 0
+    for _ in pairs(CATEGORY_BONUS_IDS) do expected = expected + 1 end
+    if resolved == expected and resolved > 0 then
+        CATEGORY_KEYWORDS = keywords
+        return true
+    end
+    return false
+end
+
+local function classify_bonuses(bonusNames)
+    if not resolve_category_keywords() then return nil end
+    local counts = { EX = 0, ATTACK = 0, AFFINITY = 0, SHARPNESS = 0, ELEMENT = 0 }
+    for _, name in ipairs(bonusNames) do
+        if name:find("EX") then
+            counts.EX = counts.EX + 1
+        end
+        for category, keyword in pairs(CATEGORY_KEYWORDS) do
+            if name:find(keyword, 1, true) then
+                counts[category] = counts[category] + 1
+                break
+            end
+        end
+    end
+    return counts
+end
+
 -- ============================================================================
 -- [3] Utility Functions
 -- ============================================================================
