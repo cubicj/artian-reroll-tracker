@@ -70,62 +70,45 @@ do
     end
 end
 
-local CATEGORY_KEYWORDS = nil
-local CATEGORY_BONUS_IDS = {}
+local function strip_bonus_tier(bonusName)
+    return bonusName:gsub("[ⅠⅡⅢ]+$", ""):gsub(" EX$", ""):gsub("%s+$", "")
+end
 
-local CATEGORY_PATTERNS = {
-    ATTACK = "ATTACK",
-    AFFINITY = "CRITICAL",
-    SHARPNESS = "SHARP",
-    ELEMENT = "ELEMENT",
-}
-
-do
-    local bonusByName = getEnumTables(TD_BonusId)
-    for category, pattern in pairs(CATEGORY_PATTERNS) do
-        for name, value in pairs(bonusByName) do
-            if name:find(pattern) and not CATEGORY_BONUS_IDS[category] then
-                CATEGORY_BONUS_IDS[category] = value
+local function extract_base_names_from_weapons(weapons, currentSession)
+    local baseNames = {}
+    local allWeapons = {}
+    for _, w in ipairs(weapons) do table.insert(allWeapons, w) end
+    if currentSession then table.insert(allWeapons, currentSession) end
+    for _, weapon in ipairs(allWeapons) do
+        if weapon.mode == "grinding" and weapon.attempts then
+            for _, attempt in ipairs(weapon.attempts) do
+                if attempt.bonuses then
+                    for _, name in ipairs(attempt.bonuses) do
+                        local base = strip_bonus_tier(name)
+                        if base ~= "" then
+                            baseNames[base] = true
+                        end
+                    end
+                end
             end
         end
     end
-end
-
-local function resolve_category_keywords()
-    if CATEGORY_KEYWORDS then return true end
-    local keywords = {}
-    local resolved = 0
-    for category, bonusId in pairs(CATEGORY_BONUS_IDS) do
-        local fullName = get_bonus_name(bonusId)
-        if fullName and fullName ~= "" and not fullName:find("Bonus_") then
-            local baseName = fullName:gsub("[ⅠⅡⅢ]+$", ""):gsub("EX$", ""):gsub("%s+$", "")
-            keywords[category] = baseName
-            resolved = resolved + 1
-        end
-    end
-    local expected = 0
-    for _ in pairs(CATEGORY_BONUS_IDS) do expected = expected + 1 end
-    if resolved == expected and resolved > 0 then
-        CATEGORY_KEYWORDS = keywords
-        return true
-    end
-    return false
+    return baseNames
 end
 
 local function classify_bonuses(bonusNames)
-    if not resolve_category_keywords() then return nil end
-    local counts = { EX = 0, ATTACK = 0, AFFINITY = 0, SHARPNESS = 0, ELEMENT = 0 }
+    local counts = {}
+    local exCount = 0
     for _, name in ipairs(bonusNames) do
         if name:find("EX") then
-            counts.EX = counts.EX + 1
+            exCount = exCount + 1
         end
-        for category, keyword in pairs(CATEGORY_KEYWORDS) do
-            if name:find(keyword, 1, true) then
-                counts[category] = counts[category] + 1
-                break
-            end
+        local base = strip_bonus_tier(name)
+        if base ~= "" then
+            counts[base] = (counts[base] or 0) + 1
         end
     end
+    counts["EX"] = exCount
     return counts
 end
 
@@ -245,13 +228,8 @@ end
 local FilterWindow = {
     open = false,
     dirty = true,
-    filters = {
-        minEx = 0,
-        minAttack = 0,
-        minAffinity = 0,
-        minSharpness = 0,
-        minElement = 0,
-    },
+    filters = {},
+    categories = {},
     results = {},
     totalAttempts = 0,
     currentPage = 1,
@@ -684,6 +662,13 @@ register_hooks()
 
 re.on_draw_ui(function()
     if imgui.tree_node("Artian Reroll Tracker") then
+        if imgui.button("Open Filter") then
+            FilterWindow.open = true
+            FilterWindow.dirty = true
+        end
+
+        imgui.spacing()
+
         local changed, newValue = imgui.checkbox("Enable Tracker", RerollTracker.enabled)
         if changed then
             RerollTracker.enabled = newValue
@@ -727,11 +712,6 @@ re.on_draw_ui(function()
         if imgui.button("Clear History") then
             clear_history()
         end
-        imgui.same_line()
-        if imgui.button("Open Filter") then
-            FilterWindow.open = true
-            FilterWindow.dirty = true
-        end
 
         imgui.spacing()
         imgui.text(string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath))
@@ -749,16 +729,37 @@ end)
 
 local function matches_filters(bonusNames, filters)
     local counts = classify_bonuses(bonusNames)
-    if not counts then return false end
-    if filters.minEx > 0 and counts.EX < filters.minEx then return false end
-    if filters.minAttack > 0 and counts.ATTACK < filters.minAttack then return false end
-    if filters.minAffinity > 0 and counts.AFFINITY < filters.minAffinity then return false end
-    if filters.minSharpness > 0 and counts.SHARPNESS < filters.minSharpness then return false end
-    if filters.minElement > 0 and counts.ELEMENT < filters.minElement then return false end
+    for category, minCount in pairs(filters) do
+        if minCount > 0 then
+            if not counts[category] or counts[category] < minCount then
+                return false
+            end
+        end
+    end
     return true
 end
 
 local function collect_filter_results()
+    local baseNames = extract_base_names_from_weapons(RerollTracker.weapons, RerollTracker.currentSession)
+
+    local sortedCategories = {}
+    table.insert(sortedCategories, "EX")
+    local others = {}
+    for name in pairs(baseNames) do
+        table.insert(others, name)
+    end
+    table.sort(others)
+    for _, name in ipairs(others) do
+        table.insert(sortedCategories, name)
+    end
+    FilterWindow.categories = sortedCategories
+
+    for _, cat in ipairs(sortedCategories) do
+        if FilterWindow.filters[cat] == nil then
+            FilterWindow.filters[cat] = 0
+        end
+    end
+
     local results = {}
     local total = 0
 
@@ -800,14 +801,22 @@ local FILTER_OPTIONS = {
     { label = "5",   value = 5 },
 }
 
+local FILTER_BTN_SIZE = {50, 25}
+
 local function draw_filter_row(label, currentValue)
     imgui.text(label)
     imgui.same_line()
-    imgui.set_cursor_pos_x(100)
     local newValue = currentValue
     for _, opt in ipairs(FILTER_OPTIONS) do
-        if imgui.radio_button(opt.label .. "##" .. label, currentValue == opt.value) then
+        local isSelected = (currentValue == opt.value)
+        if isSelected then
+            imgui.push_style_color(21, 0xFFCC8844)
+        end
+        if imgui.button(opt.label .. "##" .. label, FILTER_BTN_SIZE) then
             newValue = opt.value
+        end
+        if isSelected then
+            imgui.pop_style_color(1)
         end
         imgui.same_line()
     end
@@ -815,107 +824,110 @@ local function draw_filter_row(label, currentValue)
     return newValue
 end
 
+local _filterDbgLogged = false
+local _filterDbgErrCount = 0
+
 re.on_frame(function()
     if not FilterWindow.open then return end
 
-    local shouldDraw
-    FilterWindow.open, shouldDraw = imgui.begin_window("Artian Reroll Filter", FilterWindow.open, 0)
-    if not shouldDraw then
-        imgui.end_window()
-        return
-    end
+    local ok, err = pcall(function()
+        FilterWindow.open = imgui.begin_window("Artian Reroll Filter", FilterWindow.open, 0)
 
-    if imgui.begin_tab_bar("FilterTabs") then
-        if imgui.begin_tab_item("Grinding") then
-            imgui.end_tab_item()
-        end
-        imgui.begin_disabled(true)
-        if imgui.begin_tab_item("Lottery") then
-            imgui.end_tab_item()
-        end
-        imgui.end_disabled()
-        imgui.end_tab_bar()
-    end
+        if FilterWindow.dirty then collect_filter_results() end
 
-    imgui.spacing()
-
-    local changed = false
-    local f = FilterWindow.filters
-
-    local v
-    v = draw_filter_row("EX:", f.minEx)
-    if v ~= f.minEx then f.minEx = v; changed = true end
-
-    v = draw_filter_row("Attack:", f.minAttack)
-    if v ~= f.minAttack then f.minAttack = v; changed = true end
-
-    v = draw_filter_row("Affinity:", f.minAffinity)
-    if v ~= f.minAffinity then f.minAffinity = v; changed = true end
-
-    v = draw_filter_row("Sharpness:", f.minSharpness)
-    if v ~= f.minSharpness then f.minSharpness = v; changed = true end
-
-    v = draw_filter_row("Element:", f.minElement)
-    if v ~= f.minElement then f.minElement = v; changed = true end
-
-    if changed then FilterWindow.dirty = true end
-    if FilterWindow.dirty then collect_filter_results() end
-
-    imgui.spacing()
-    imgui.separator()
-    imgui.spacing()
-
-    local results = FilterWindow.results
-    imgui.text(string.format("Results: %d / %d attempts", #results, FilterWindow.totalAttempts))
-
-    imgui.spacing()
-
-    if #results == 0 then
-        if FilterWindow.totalAttempts == 0 then
-            imgui.text_colored("No grinding data recorded yet.", 0xFF888888)
-        else
-            imgui.text_colored("No results match current filters.", 0xFF888888)
-        end
-    else
-        local totalPages = math.ceil(#results / FilterWindow.pageSize)
-        local startIdx = (FilterWindow.currentPage - 1) * FilterWindow.pageSize + 1
-        local endIdx = math.min(FilterWindow.currentPage * FilterWindow.pageSize, #results)
-
-        if imgui.begin_table("FilterResults", 3, 1 << 0 | 1 << 1 | 1 << 2 | 1 << 12) then
-            imgui.table_setup_column("#", 1 << 0, 40)
-            imgui.table_setup_column("Weapon", 1 << 0, 150)
-            imgui.table_setup_column("Bonuses", 1 << 1)
-            imgui.table_headers_row()
-
-            for i = startIdx, endIdx do
-                local r = results[i]
-                imgui.table_next_row()
-                imgui.table_next_column()
-                imgui.text(tostring(r.attemptNum))
-                imgui.table_next_column()
-                imgui.text(r.weapon)
-                imgui.table_next_column()
-                imgui.text(table.concat(r.bonuses, ", "))
+        if not _filterDbgLogged then
+            log.info(TAG .. " [FilterUI] categories=" .. #FilterWindow.categories)
+            for _, cat in ipairs(FilterWindow.categories) do
+                log.info(TAG .. " [FilterUI]   [" .. cat .. "]")
             end
-
-            imgui.end_table()
+            log.info(TAG .. " [FilterUI] results=" .. #FilterWindow.results .. " total=" .. FilterWindow.totalAttempts)
         end
 
         imgui.spacing()
-        if FilterWindow.currentPage > 1 then
-            if imgui.button("< Prev") then
-                FilterWindow.currentPage = FilterWindow.currentPage - 1
-            end
-            imgui.same_line()
-        end
-        imgui.text(string.format("Page %d / %d", FilterWindow.currentPage, totalPages))
-        if FilterWindow.currentPage < totalPages then
-            imgui.same_line()
-            if imgui.button("Next >") then
-                FilterWindow.currentPage = FilterWindow.currentPage + 1
-            end
-        end
-    end
 
-    imgui.end_window()
+        local changed = false
+        for _, category in ipairs(FilterWindow.categories) do
+            local v = draw_filter_row(category .. ":", FilterWindow.filters[category] or 0)
+            if v ~= (FilterWindow.filters[category] or 0) then
+                FilterWindow.filters[category] = v
+                changed = true
+            end
+        end
+
+        if changed then
+            FilterWindow.dirty = true
+            collect_filter_results()
+        end
+
+        imgui.spacing()
+        imgui.separator()
+        imgui.spacing()
+
+        local results = FilterWindow.results
+        imgui.text(string.format("Results: %d / %d attempts", #results, FilterWindow.totalAttempts))
+
+        imgui.spacing()
+
+        if #results == 0 then
+            if FilterWindow.totalAttempts == 0 then
+                imgui.text_colored("No grinding data recorded yet.", 0xFF888888)
+            else
+                imgui.text_colored("No results match current filters.", 0xFF888888)
+            end
+        else
+            local totalPages = math.ceil(#results / FilterWindow.pageSize)
+            local startIdx = (FilterWindow.currentPage - 1) * FilterWindow.pageSize + 1
+            local endIdx = math.min(FilterWindow.currentPage * FilterWindow.pageSize, #results)
+
+            if imgui.begin_table("FilterResults", 3, imgui.TableFlags.RowBg) then
+                imgui.table_setup_column("#", imgui.ColumnFlags.WidthFixed, 40)
+                imgui.table_setup_column("Weapon", imgui.ColumnFlags.WidthFixed, 160)
+                imgui.table_setup_column("Bonuses", imgui.ColumnFlags.WidthStretch)
+                imgui.table_headers_row()
+
+                for i = startIdx, endIdx do
+                    local r = results[i]
+                    imgui.table_next_row()
+                    imgui.table_next_column()
+                    imgui.text(tostring(r.attemptNum))
+                    imgui.table_next_column()
+                    imgui.text(r.weapon)
+                    imgui.table_next_column()
+                    imgui.text(table.concat(r.bonuses, ", "))
+                end
+
+                imgui.end_table()
+            end
+
+            imgui.spacing()
+            if FilterWindow.currentPage > 1 then
+                if imgui.button("< Prev") then
+                    FilterWindow.currentPage = FilterWindow.currentPage - 1
+                end
+                imgui.same_line()
+            end
+            imgui.text(string.format("Page %d / %d", FilterWindow.currentPage, totalPages))
+            if FilterWindow.currentPage < totalPages then
+                imgui.same_line()
+                if imgui.button("Next >") then
+                    FilterWindow.currentPage = FilterWindow.currentPage + 1
+                end
+            end
+        end
+
+        imgui.end_window()
+
+        if not _filterDbgLogged then
+            log.info(TAG .. " [FilterUI] frame rendered successfully")
+            _filterDbgLogged = true
+        end
+    end)
+
+    if not ok then
+        _filterDbgErrCount = _filterDbgErrCount + 1
+        if _filterDbgErrCount <= 3 then
+            log.error(TAG .. " [FilterUI] ERROR: " .. tostring(err))
+        end
+        FilterWindow.open = false
+    end
 end)
