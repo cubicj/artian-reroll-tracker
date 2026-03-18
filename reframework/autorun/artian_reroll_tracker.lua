@@ -242,6 +242,22 @@ end
 -- [4] State & Session Management
 -- ============================================================================
 
+local FilterWindow = {
+    open = false,
+    dirty = true,
+    filters = {
+        minEx = 0,
+        minAttack = 0,
+        minAffinity = 0,
+        minSharpness = 0,
+        minElement = 0,
+    },
+    results = {},
+    totalAttempts = 0,
+    currentPage = 1,
+    pageSize = 50,
+}
+
 local RerollTracker = {
     enabled = false,
     currentSession = nil,
@@ -386,6 +402,7 @@ local function record_attempt(bonusIds)
         bonuses = bonusNames
     })
     RerollTracker.save_to_json()
+    FilterWindow.dirty = true
 end
 
 local function record_skill_attempt(seriesSkill, groupSkill)
@@ -456,6 +473,7 @@ local function clear_history()
     RerollTracker.attemptCount = 0
     reset_all_captured()
     RerollTracker.save_to_json()
+    FilterWindow.dirty = true
     if RerollTracker.enabled then
         start_new_session()
     end
@@ -719,3 +737,47 @@ re.on_draw_ui(function()
         imgui.tree_pop()
     end
 end)
+
+-- ============================================================================
+-- [9] Filter State & Logic
+-- ============================================================================
+
+local function matches_filters(bonusNames, filters)
+    local counts = classify_bonuses(bonusNames)
+    if not counts then return false end
+    if filters.minEx > 0 and counts.EX < filters.minEx then return false end
+    if filters.minAttack > 0 and counts.ATTACK < filters.minAttack then return false end
+    if filters.minAffinity > 0 and counts.AFFINITY < filters.minAffinity then return false end
+    if filters.minSharpness > 0 and counts.SHARPNESS < filters.minSharpness then return false end
+    if filters.minElement > 0 and counts.ELEMENT < filters.minElement then return false end
+    return true
+end
+
+local function collect_filter_results()
+    local results = {}
+    local total = 0
+
+    local allWeapons = {}
+    for _, w in ipairs(RerollTracker.weapons) do table.insert(allWeapons, w) end
+    if RerollTracker.currentSession then table.insert(allWeapons, RerollTracker.currentSession) end
+
+    for _, weapon in ipairs(allWeapons) do
+        if weapon.mode == "grinding" and weapon.attempts then
+            for _, attempt in ipairs(weapon.attempts) do
+                total = total + 1
+                if attempt.bonuses and matches_filters(attempt.bonuses, FilterWindow.filters) then
+                    table.insert(results, {
+                        attemptNum = attempt.attemptNum,
+                        weapon = weapon.nickname or "Unknown",
+                        bonuses = attempt.bonuses,
+                    })
+                end
+            end
+        end
+    end
+
+    FilterWindow.results = results
+    FilterWindow.totalAttempts = total
+    FilterWindow.currentPage = 1
+    FilterWindow.dirty = false
+end
