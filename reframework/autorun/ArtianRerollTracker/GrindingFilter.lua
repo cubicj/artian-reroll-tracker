@@ -134,7 +134,7 @@ function _M.register_ui()
         local ok, err = pcall(function()
             if filterFont then imgui.push_font(filterFont) end
 
-            FW.open = imgui.begin_window("Artian Reroll Filter", FW.open, 0)
+            FW.open = imgui.begin_window("Artian Grinding Filter", FW.open, 0)
 
             if FW.dirty then _M.collect_results() end
 

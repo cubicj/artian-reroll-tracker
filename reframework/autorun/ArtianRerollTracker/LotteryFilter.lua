@@ -61,28 +61,17 @@ function _M.collect_results()
     LW.weaponComboItems = weaponCombo
     if LW.weaponComboIdx > #weaponCombo then LW.weaponComboIdx = 1 end
 
-    local groupCombo = {"All"}
-    for _, name in ipairs(groupList) do table.insert(groupCombo, name) end
-    LW.groupComboItems = groupCombo
-    if LW.groupComboIdx > #groupCombo then LW.groupComboIdx = 1 end
-
-    local seriesCombo = {"All"}
-    for _, name in ipairs(seriesList) do table.insert(seriesCombo, name) end
-    LW.seriesComboItems = seriesCombo
-    if LW.seriesComboIdx > #seriesCombo then LW.seriesComboIdx = 1 end
+    LW.groupItems = groupList
+    LW.seriesItems = seriesList
 
     local selectedWeapon = nil
     if LW.weaponComboIdx > 1 then
         selectedWeapon = weaponCombo[LW.weaponComboIdx]
     end
-    local selectedGroup = nil
-    if LW.groupComboIdx > 1 then
-        selectedGroup = groupCombo[LW.groupComboIdx]
-    end
-    local selectedSeries = nil
-    if LW.seriesComboIdx > 1 then
-        selectedSeries = seriesCombo[LW.seriesComboIdx]
-    end
+    local hasGroupFilter = false
+    for _ in pairs(LW.groupSelected) do hasGroupFilter = true; break end
+    local hasSeriesFilter = false
+    for _ in pairs(LW.seriesSelected) do hasSeriesFilter = true; break end
 
     local results = {}
     local total = 0
@@ -98,8 +87,8 @@ function _M.collect_results()
                     local s = attempt.skills.series or ""
                     local gLabel = g ~= "" and g or NONE_LABEL
                     local sLabel = s ~= "" and s or NONE_LABEL
-                    local groupMatch = (selectedGroup == nil) or (gLabel == selectedGroup)
-                    local seriesMatch = (selectedSeries == nil) or (sLabel == selectedSeries)
+                    local groupMatch = not hasGroupFilter or LW.groupSelected[gLabel]
+                    local seriesMatch = not hasSeriesFilter or LW.seriesSelected[sLabel]
                     if groupMatch and seriesMatch then
                         table.insert(results, {
                             attemptNum = attempt.attemptNum,
@@ -137,22 +126,54 @@ function _M.register_ui()
             local wChanged, wIdx = imgui.combo("Weapon##lot", LW.weaponComboIdx, LW.weaponComboItems)
             if wChanged then
                 LW.weaponComboIdx = wIdx
+                if wIdx == 1 then
+                    LW.groupSelected = {}
+                    LW.seriesSelected = {}
+                end
                 LW.dirty = true
                 _M.collect_results()
             end
 
-            local gChanged, gIdx = imgui.combo("Group##lot", LW.groupComboIdx, LW.groupComboItems)
-            if gChanged then
-                LW.groupComboIdx = gIdx
-                LW.dirty = true
-                _M.collect_results()
-            end
+            if LW.weaponComboIdx > 1 then
+                imgui.set_next_item_open(false, 2)
+                if imgui.tree_node("Group") then
+                    for idx, name in ipairs(LW.groupItems) do
+                        local active = LW.groupSelected[name] or false
+                        if active then imgui.push_style_color(21, 0xFF557744) end
+                        if imgui.button(name .. "##grp") then
+                            if active then
+                                LW.groupSelected[name] = nil
+                            else
+                                LW.groupSelected[name] = true
+                            end
+                            LW.dirty = true
+                            _M.collect_results()
+                        end
+                        if active then imgui.pop_style_color(1) end
+                        if idx % 4 ~= 0 and idx ~= #LW.groupItems then imgui.same_line() end
+                    end
+                    imgui.tree_pop()
+                end
 
-            local sChanged, sIdx = imgui.combo("Series##lot", LW.seriesComboIdx, LW.seriesComboItems)
-            if sChanged then
-                LW.seriesComboIdx = sIdx
-                LW.dirty = true
-                _M.collect_results()
+                imgui.set_next_item_open(false, 2)
+                if imgui.tree_node("Series") then
+                    for idx, name in ipairs(LW.seriesItems) do
+                        local active = LW.seriesSelected[name] or false
+                        if active then imgui.push_style_color(21, 0xFF557744) end
+                        if imgui.button(name .. "##ser") then
+                            if active then
+                                LW.seriesSelected[name] = nil
+                            else
+                                LW.seriesSelected[name] = true
+                            end
+                            LW.dirty = true
+                            _M.collect_results()
+                        end
+                        if active then imgui.pop_style_color(1) end
+                        if idx % 4 ~= 0 and idx ~= #LW.seriesItems then imgui.same_line() end
+                    end
+                    imgui.tree_pop()
+                end
             end
 
             imgui.spacing()
