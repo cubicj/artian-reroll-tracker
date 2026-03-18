@@ -234,6 +234,11 @@ local FilterWindow = {
     totalAttempts = 0,
     currentPage = 1,
     pageSize = 50,
+    weaponNames = {},
+    weaponComboItems = {"All"},
+    weaponComboIdx = 1,
+    selected = {},
+    hideUnchecked = false,
 }
 
 local RerollTracker = {
@@ -662,7 +667,7 @@ register_hooks()
 
 re.on_draw_ui(function()
     if imgui.tree_node("Artian Reroll Tracker") then
-        if imgui.button("Open Filter") then
+        if imgui.button("Open Grinding Result") then
             FilterWindow.open = true
             FilterWindow.dirty = true
         end
@@ -760,21 +765,52 @@ local function collect_filter_results()
         end
     end
 
-    local results = {}
-    local total = 0
-
     local allWeapons = {}
     for _, w in ipairs(RerollTracker.weapons) do table.insert(allWeapons, w) end
     if RerollTracker.currentSession then table.insert(allWeapons, RerollTracker.currentSession) end
 
+    local weaponSet = {}
+    local weaponList = {}
+    for _, weapon in ipairs(allWeapons) do
+        if weapon.mode == "grinding" and weapon.nickname then
+            local nick = weapon.nickname
+            if not weaponSet[nick] then
+                weaponSet[nick] = true
+                table.insert(weaponList, nick)
+            end
+        end
+    end
+    table.sort(weaponList)
+    FilterWindow.weaponNames = weaponList
+
+    local comboItems = {"All"}
+    for _, name in ipairs(weaponList) do
+        table.insert(comboItems, name)
+    end
+    FilterWindow.weaponComboItems = comboItems
+
+    if FilterWindow.weaponComboIdx > #comboItems then
+        FilterWindow.weaponComboIdx = 1
+    end
+
+    local selectedWeapon = nil
+    if FilterWindow.weaponComboIdx > 1 then
+        selectedWeapon = comboItems[FilterWindow.weaponComboIdx]
+    end
+
+    local results = {}
+    local total = 0
+
     for _, weapon in ipairs(allWeapons) do
         if weapon.mode == "grinding" and weapon.attempts then
+            local nick = weapon.nickname or "Unknown"
+            local weaponMatch = (selectedWeapon == nil) or (nick == selectedWeapon)
             for _, attempt in ipairs(weapon.attempts) do
                 total = total + 1
-                if attempt.bonuses and matches_filters(attempt.bonuses, FilterWindow.filters) then
+                if weaponMatch and attempt.bonuses and matches_filters(attempt.bonuses, FilterWindow.filters) then
                     table.insert(results, {
                         attemptNum = attempt.attemptNum,
-                        weapon = weapon.nickname or "Unknown",
+                        weapon = nick,
                         bonuses = attempt.bonuses,
                     })
                 end
@@ -792,6 +828,11 @@ end
 -- [10] Filter UI
 -- ============================================================================
 
+local FilterFont = nil
+if imgui.load_font then
+    pcall(function() FilterFont = imgui.load_font(nil, 18) end)
+end
+
 local FILTER_OPTIONS = {
     { label = "All", value = 0 },
     { label = "1+",  value = 1 },
@@ -801,7 +842,7 @@ local FILTER_OPTIONS = {
     { label = "5",   value = 5 },
 }
 
-local FILTER_BTN_SIZE = {50, 25}
+local FILTER_BTN_SIZE = {48, 26}
 
 local function draw_filter_row(label, currentValue)
     imgui.text(label)
@@ -824,25 +865,27 @@ local function draw_filter_row(label, currentValue)
     return newValue
 end
 
-local _filterDbgLogged = false
-local _filterDbgErrCount = 0
-
 re.on_frame(function()
     if not FilterWindow.open then return end
 
     local ok, err = pcall(function()
+        if FilterFont then imgui.push_font(FilterFont) end
+
         FilterWindow.open = imgui.begin_window("Artian Reroll Filter", FilterWindow.open, 0)
 
         if FilterWindow.dirty then collect_filter_results() end
 
-        if not _filterDbgLogged then
-            log.info(TAG .. " [FilterUI] categories=" .. #FilterWindow.categories)
-            for _, cat in ipairs(FilterWindow.categories) do
-                log.info(TAG .. " [FilterUI]   [" .. cat .. "]")
-            end
-            log.info(TAG .. " [FilterUI] results=" .. #FilterWindow.results .. " total=" .. FilterWindow.totalAttempts)
+        imgui.spacing()
+
+        local comboChanged, newIdx = imgui.combo("Weapon", FilterWindow.weaponComboIdx, FilterWindow.weaponComboItems)
+        if comboChanged then
+            FilterWindow.weaponComboIdx = newIdx
+            FilterWindow.dirty = true
+            collect_filter_results()
         end
 
+        imgui.spacing()
+        imgui.separator()
         imgui.spacing()
 
         local changed = false
@@ -864,6 +907,17 @@ re.on_frame(function()
         imgui.spacing()
 
         local results = FilterWindow.results
+
+        if FilterWindow.hideUnchecked then
+            imgui.push_style_color(21, 0xFF557744)
+        end
+        if imgui.button(FilterWindow.hideUnchecked and "Show All" or "Checked Only") then
+            FilterWindow.hideUnchecked = not FilterWindow.hideUnchecked
+        end
+        if FilterWindow.hideUnchecked then
+            imgui.pop_style_color(1)
+        end
+        imgui.spacing()
         imgui.text(string.format("Results: %d / %d attempts", #results, FilterWindow.totalAttempts))
 
         imgui.spacing()
@@ -875,25 +929,68 @@ re.on_frame(function()
                 imgui.text_colored("No results match current filters.", 0xFF888888)
             end
         else
-            local totalPages = math.ceil(#results / FilterWindow.pageSize)
-            local startIdx = (FilterWindow.currentPage - 1) * FilterWindow.pageSize + 1
-            local endIdx = math.min(FilterWindow.currentPage * FilterWindow.pageSize, #results)
+            local displayResults = results
+            if FilterWindow.hideUnchecked then
+                displayResults = {}
+                for _, r in ipairs(results) do
+                    local key = r.weapon .. "_" .. tostring(r.attemptNum)
+                    if FilterWindow.selected[key] then
+                        table.insert(displayResults, r)
+                    end
+                end
+            end
 
-            if imgui.begin_table("FilterResults", 3, imgui.TableFlags.RowBg) then
+            local totalPages = math.max(1, math.ceil(#displayResults / FilterWindow.pageSize))
+            if FilterWindow.currentPage > totalPages then FilterWindow.currentPage = totalPages end
+            local startIdx = (FilterWindow.currentPage - 1) * FilterWindow.pageSize + 1
+            local endIdx = math.min(FilterWindow.currentPage * FilterWindow.pageSize, #displayResults)
+
+            if imgui.begin_table("FilterResults", 4, imgui.TableFlags.RowBg) then
+                imgui.table_setup_column("", imgui.ColumnFlags.WidthFixed, 30)
                 imgui.table_setup_column("#", imgui.ColumnFlags.WidthFixed, 40)
-                imgui.table_setup_column("Weapon", imgui.ColumnFlags.WidthFixed, 160)
-                imgui.table_setup_column("Bonuses", imgui.ColumnFlags.WidthStretch)
+                imgui.table_setup_column("Weapon", imgui.ColumnFlags.WidthStretch, 2.0)
+                imgui.table_setup_column("Bonuses", imgui.ColumnFlags.WidthStretch, 5.0)
                 imgui.table_headers_row()
 
+                local DIM = 0xFF666666
+
                 for i = startIdx, endIdx do
-                    local r = results[i]
+                    local r = displayResults[i]
+                    local key = r.weapon .. "_" .. tostring(r.attemptNum)
+                    local checked = FilterWindow.selected[key] or false
+                    local btnId = "##sel" .. tostring(i)
+
                     imgui.table_next_row()
                     imgui.table_next_column()
-                    imgui.text(tostring(r.attemptNum))
+                    if checked then
+                        imgui.push_style_color(21, 0xFF557744)
+                    end
+                    if imgui.button(checked and "v" .. btnId or btnId, {20, 20}) then
+                        FilterWindow.selected[key] = not checked
+                    end
+                    if checked then
+                        imgui.pop_style_color(1)
+                    end
+
                     imgui.table_next_column()
-                    imgui.text(r.weapon)
+                    if checked then
+                        imgui.text(tostring(r.attemptNum))
+                    else
+                        imgui.text_colored(tostring(r.attemptNum), DIM)
+                    end
                     imgui.table_next_column()
-                    imgui.text(table.concat(r.bonuses, ", "))
+                    if checked then
+                        imgui.text(r.weapon)
+                    else
+                        imgui.text_colored(r.weapon, DIM)
+                    end
+                    imgui.table_next_column()
+                    local bonusText = table.concat(r.bonuses, ", ")
+                    if checked then
+                        imgui.text(bonusText)
+                    else
+                        imgui.text_colored(bonusText, DIM)
+                    end
                 end
 
                 imgui.end_table()
@@ -916,18 +1013,14 @@ re.on_frame(function()
         end
 
         imgui.end_window()
-
-        if not _filterDbgLogged then
-            log.info(TAG .. " [FilterUI] frame rendered successfully")
-            _filterDbgLogged = true
-        end
+        if FilterFont then imgui.pop_font() end
     end)
 
     if not ok then
-        _filterDbgErrCount = _filterDbgErrCount + 1
-        if _filterDbgErrCount <= 3 then
-            log.error(TAG .. " [FilterUI] ERROR: " .. tostring(err))
-        end
+        log.error(TAG .. " [FilterUI] " .. tostring(err))
+        pcall(function()
+            if FilterFont then imgui.pop_font() end
+        end)
         FilterWindow.open = false
     end
 end)
