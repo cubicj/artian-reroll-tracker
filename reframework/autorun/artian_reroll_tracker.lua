@@ -727,6 +727,11 @@ re.on_draw_ui(function()
         if imgui.button("Clear History") then
             clear_history()
         end
+        imgui.same_line()
+        if imgui.button("Open Filter") then
+            FilterWindow.open = true
+            FilterWindow.dirty = true
+        end
 
         imgui.spacing()
         imgui.text(string.format("JSON: reframework/data/%s", RerollTracker.dataFilePath))
@@ -781,3 +786,136 @@ local function collect_filter_results()
     FilterWindow.currentPage = 1
     FilterWindow.dirty = false
 end
+
+-- ============================================================================
+-- [10] Filter UI
+-- ============================================================================
+
+local FILTER_OPTIONS = {
+    { label = "All", value = 0 },
+    { label = "1+",  value = 1 },
+    { label = "2+",  value = 2 },
+    { label = "3+",  value = 3 },
+    { label = "4+",  value = 4 },
+    { label = "5",   value = 5 },
+}
+
+local function draw_filter_row(label, currentValue)
+    imgui.text(label)
+    imgui.same_line()
+    imgui.set_cursor_pos_x(100)
+    local newValue = currentValue
+    for _, opt in ipairs(FILTER_OPTIONS) do
+        if imgui.radio_button(opt.label .. "##" .. label, currentValue == opt.value) then
+            newValue = opt.value
+        end
+        imgui.same_line()
+    end
+    imgui.new_line()
+    return newValue
+end
+
+re.on_frame(function()
+    if not FilterWindow.open then return end
+
+    local shouldDraw
+    FilterWindow.open, shouldDraw = imgui.begin_window("Artian Reroll Filter", FilterWindow.open, 0)
+    if not shouldDraw then
+        imgui.end_window()
+        return
+    end
+
+    if imgui.begin_tab_bar("FilterTabs") then
+        if imgui.begin_tab_item("Grinding") then
+            imgui.end_tab_item()
+        end
+        imgui.begin_disabled(true)
+        if imgui.begin_tab_item("Lottery") then
+            imgui.end_tab_item()
+        end
+        imgui.end_disabled()
+        imgui.end_tab_bar()
+    end
+
+    imgui.spacing()
+
+    local changed = false
+    local f = FilterWindow.filters
+
+    local v
+    v = draw_filter_row("EX:", f.minEx)
+    if v ~= f.minEx then f.minEx = v; changed = true end
+
+    v = draw_filter_row("Attack:", f.minAttack)
+    if v ~= f.minAttack then f.minAttack = v; changed = true end
+
+    v = draw_filter_row("Affinity:", f.minAffinity)
+    if v ~= f.minAffinity then f.minAffinity = v; changed = true end
+
+    v = draw_filter_row("Sharpness:", f.minSharpness)
+    if v ~= f.minSharpness then f.minSharpness = v; changed = true end
+
+    v = draw_filter_row("Element:", f.minElement)
+    if v ~= f.minElement then f.minElement = v; changed = true end
+
+    if changed then FilterWindow.dirty = true end
+    if FilterWindow.dirty then collect_filter_results() end
+
+    imgui.spacing()
+    imgui.separator()
+    imgui.spacing()
+
+    local results = FilterWindow.results
+    imgui.text(string.format("Results: %d / %d attempts", #results, FilterWindow.totalAttempts))
+
+    imgui.spacing()
+
+    if #results == 0 then
+        if FilterWindow.totalAttempts == 0 then
+            imgui.text_colored("No grinding data recorded yet.", 0xFF888888)
+        else
+            imgui.text_colored("No results match current filters.", 0xFF888888)
+        end
+    else
+        local totalPages = math.ceil(#results / FilterWindow.pageSize)
+        local startIdx = (FilterWindow.currentPage - 1) * FilterWindow.pageSize + 1
+        local endIdx = math.min(FilterWindow.currentPage * FilterWindow.pageSize, #results)
+
+        if imgui.begin_table("FilterResults", 3, 1 << 0 | 1 << 1 | 1 << 2 | 1 << 12) then
+            imgui.table_setup_column("#", 1 << 0, 40)
+            imgui.table_setup_column("Weapon", 1 << 0, 150)
+            imgui.table_setup_column("Bonuses", 1 << 1)
+            imgui.table_headers_row()
+
+            for i = startIdx, endIdx do
+                local r = results[i]
+                imgui.table_next_row()
+                imgui.table_next_column()
+                imgui.text(tostring(r.attemptNum))
+                imgui.table_next_column()
+                imgui.text(r.weapon)
+                imgui.table_next_column()
+                imgui.text(table.concat(r.bonuses, ", "))
+            end
+
+            imgui.end_table()
+        end
+
+        imgui.spacing()
+        if FilterWindow.currentPage > 1 then
+            if imgui.button("< Prev") then
+                FilterWindow.currentPage = FilterWindow.currentPage - 1
+            end
+            imgui.same_line()
+        end
+        imgui.text(string.format("Page %d / %d", FilterWindow.currentPage, totalPages))
+        if FilterWindow.currentPage < totalPages then
+            imgui.same_line()
+            if imgui.button("Next >") then
+                FilterWindow.currentPage = FilterWindow.currentPage + 1
+            end
+        end
+    end
+
+    imgui.end_window()
+end)
