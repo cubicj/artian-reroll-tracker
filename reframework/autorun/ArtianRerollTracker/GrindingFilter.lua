@@ -77,17 +77,27 @@ function _M.collect_results()
             local nick = weapon.nickname
             if not weaponSet[nick] then
                 weaponSet[nick] = true
-                table.insert(weaponList, nick)
+                table.insert(weaponList, {
+                    name = nick,
+                    typeName = weapon.weaponTypeName or nick,
+                    attribute = weapon.attribute or "",
+                })
             end
         end
     end
-    table.sort(weaponList)
-    FW.weaponNames = weaponList
+    table.sort(weaponList, function(a, b)
+        if a.typeName ~= b.typeName then return a.typeName < b.typeName end
+        if a.attribute ~= b.attribute then return a.attribute < b.attribute end
+        return a.name < b.name
+    end)
 
     local comboItems = {"All"}
-    for _, name in ipairs(weaponList) do
-        table.insert(comboItems, name)
+    local weaponNames = {}
+    for _, weapon in ipairs(weaponList) do
+        table.insert(comboItems, weapon.name)
+        table.insert(weaponNames, weapon.name)
     end
+    FW.weaponNames = weaponNames
     FW.weaponComboItems = comboItems
 
     if FW.weaponComboIdx > #comboItems then
