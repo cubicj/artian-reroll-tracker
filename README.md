@@ -21,7 +21,22 @@ Track your Gogmazios Artian weapon grinding and skill lottery results. Skips all
 
 1. Install REFramework if you haven't already
 2. Extract the mod archive into your Monster Hunter Wilds game directory
-3. File structure: `<game folder>/reframework/autorun/artian_reroll_tracker.lua`
+3. File structure:
+
+```text
+<game folder>/
+└── reframework/
+    └── autorun/
+        ├── ArtianRerollTracker.lua
+        └── ArtianRerollTracker/
+            ├── GrindingFilter.lua
+            ├── Hooks.lua
+            ├── LotteryFilter.lua
+            ├── Persistence.lua
+            ├── Sdk.lua
+            ├── State.lua
+            └── Ui.lua
+```
 
 ## Usage
 
@@ -87,3 +102,20 @@ Data saved to: `reframework/data/reroll_sessions.json`
 ## Author
 
 **JCubic** — [Nexus Mods](https://www.nexusmods.com/monsterhunterwilds/mods/3902)
+
+## Development
+
+
+Packaging requires Linux-native `node`, `npm`, and `zip`; there are no npm package dependencies.
+
+```bash
+npm run package
+```
+
+This creates `dist/artian-reroll-tracker.zip` from `modinfo.ini` and `reframework/`.
+
+Deploying to the Windows Fluffy Mod Manager folder is explicit:
+
+```bash
+npm run deploy:windows
+```
