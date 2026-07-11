@@ -71,9 +71,9 @@ local function apply_weapon_info(session, weaponType, attribute)
     session.nickname = (attribute ~= "" and attribute .. " " or "") .. typeName
 end
 
-local function find_existing_session(weaponType, attribute)
+local function find_existing_session(weaponType, attribute, mode)
     for i, weapon in ipairs(_M.RerollTracker.weapons) do
-        if weapon.weaponType == weaponType and weapon.attribute == attribute then
+        if weapon.weaponType == weaponType and weapon.attribute == attribute and weapon.mode == mode then
             return i
         end
     end
@@ -85,7 +85,8 @@ local function save_current_session_to_weapons()
     if #_M.RerollTracker.currentSession.attempts == 0 then return end
     local existingIndex = find_existing_session(
         _M.RerollTracker.currentSession.weaponType,
-        _M.RerollTracker.currentSession.attribute
+        _M.RerollTracker.currentSession.attribute,
+        _M.RerollTracker.currentSession.mode
     )
     if existingIndex then
         _M.RerollTracker.weapons[existingIndex] = _M.RerollTracker.currentSession
@@ -141,6 +142,12 @@ function _M.check_and_update_session_weapon(capturedType, capturedAttribute)
 
     if session.weaponType == -1 then
         apply_weapon_info(session, capturedType, capturedAttribute)
+        local existingIndex = find_existing_session(capturedType, capturedAttribute, session.mode)
+        if existingIndex then
+            _M.RerollTracker.currentSession = _M.RerollTracker.weapons[existingIndex]
+            _M.RerollTracker.attemptCount = #_M.RerollTracker.currentSession.attempts
+            table.remove(_M.RerollTracker.weapons, existingIndex)
+        end
         return
     end
 
@@ -149,7 +156,7 @@ function _M.check_and_update_session_weapon(capturedType, capturedAttribute)
     if not typeChanged and not attrChanged then return end
 
     save_current_session_to_weapons()
-    local existingIndex = find_existing_session(capturedType, capturedAttribute)
+    local existingIndex = find_existing_session(capturedType, capturedAttribute, session.mode)
     if existingIndex then
         _M.RerollTracker.currentSession = _M.RerollTracker.weapons[existingIndex]
         _M.RerollTracker.attemptCount = #_M.RerollTracker.currentSession.attempts
