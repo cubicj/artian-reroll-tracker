@@ -217,7 +217,17 @@ function _M.clear_history()
     _M.RerollTracker.attemptCount = 0
     _M.reset_all_captured()
     _M.on_save()
+    _M.FilterWindow.weaponComboIdx = 1
+    _M.FilterWindow.filters = {}
+    _M.FilterWindow.selected = {}
+    _M.FilterWindow.hideUnchecked = false
     _M.FilterWindow.dirty = true
+    _M.LotteryWindow.weaponComboIdx = 1
+    _M.LotteryWindow.groupSelected = {}
+    _M.LotteryWindow.seriesSelected = {}
+    _M.LotteryWindow.selected = {}
+    _M.LotteryWindow.hideUnchecked = false
+    _M.LotteryWindow.dirty = true
     if _M.RerollTracker.enabled then
         _M.start_new_session()
     end
