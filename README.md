@@ -102,20 +102,3 @@ Data saved to: `reframework/data/reroll_sessions.json`
 ## Author
 
 **JCubic** — [Nexus Mods](https://www.nexusmods.com/monsterhunterwilds/mods/3902)
-
-## Development
-
-
-Packaging requires Linux-native `node`, `npm`, and `zip`; there are no npm package dependencies.
-
-```bash
-npm run package
-```
-
-This creates `dist/Artian Reroll Tracker.zip` from `modinfo.ini` and `reframework/`.
-
-Deploying to the Windows Fluffy Mod Manager folder is explicit:
-
-```bash
-npm run deploy:windows
-```
