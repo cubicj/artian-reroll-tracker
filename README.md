@@ -112,7 +112,7 @@ Packaging requires Linux-native `node`, `npm`, and `zip`; there are no npm packa
 npm run package
 ```
 
-This creates `dist/artian-reroll-tracker.zip` from `modinfo.ini` and `reframework/`.
+This creates `dist/Artian Reroll Tracker.zip` from `modinfo.ini` and `reframework/`.
 
 Deploying to the Windows Fluffy Mod Manager folder is explicit:
 
