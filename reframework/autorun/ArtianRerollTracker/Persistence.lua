@@ -1,3 +1,4 @@
+local TAG = "[RerollTracker]"
 local State
 local _M = {}
 
@@ -34,9 +35,12 @@ function _M.load_from_json()
         return json.load_file(RT.dataFilePath)
     end)
     if not success or not data then return end
+    if type(data.weapons) ~= "table" then return end
     RT.weapons = {}
-    for _, weapon in ipairs(data.weapons or {}) do
-        if weapon.isCurrent then
+    for _, weapon in ipairs(data.weapons) do
+        if type(weapon) ~= "table" or type(weapon.attempts) ~= "table" then
+            log.error(TAG .. " Skipped invalid session entry in " .. RT.dataFilePath)
+        elseif weapon.isCurrent then
             weapon.isCurrent = nil
             RT.currentSession = weapon
             RT.attemptCount = #weapon.attempts
