@@ -91,8 +91,15 @@ _M.notifyWindowID2Name = notifyWindowID2Name
 _M.fixedToTypeMap = fixedToTypeMap
 _M.fixedToBonusIdMap = fixedToBonusIdMap
 
+local BONUS_TIER_SUFFIXES = {" III", " II", " I", " IV", " V", " EX", "Ⅲ", "Ⅱ", "Ⅰ", "Ⅳ", "Ⅴ", "EX"}
+
 local function strip_bonus_tier(bonusName)
-    return bonusName:gsub("[ⅠⅡⅢ]+$", ""):gsub(" EX$", ""):gsub("%s+$", "")
+    for _, suffix in ipairs(BONUS_TIER_SUFFIXES) do
+        if #bonusName > #suffix and bonusName:sub(-#suffix) == suffix then
+            return bonusName:sub(1, #bonusName - #suffix):gsub("%s+$", "")
+        end
+    end
+    return bonusName:gsub("%s+$", "")
 end
 
 local function extract_base_names_from_weapons(weapons, currentSession)
@@ -121,7 +128,7 @@ local function classify_bonuses(bonusNames)
     local counts = {}
     local exCount = 0
     for _, name in ipairs(bonusNames) do
-        if name:find("EX") then
+        if name:sub(-2) == "EX" then
             exCount = exCount + 1
         end
         local base = strip_bonus_tier(name)
