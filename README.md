@@ -11,6 +11,10 @@ Track your Gogmazios Artian weapon grinding and skill lottery results. Skips all
 - Auto-confirms all dialogs during rerolling
 - Auto-detects weapon type and attribute
 - Automatically manages sessions per weapon
+- Grinding filter: filter by weapon and bonus categories
+- Lottery filter: filter by weapon, group, and series (multi-select toggle buttons)
+- Select/check individual results for comparison
+- Reset button to clear all filters and selections
 - Exports all results to JSON
 
 ## Requirements
@@ -29,6 +33,7 @@ Track your Gogmazios Artian weapon grinding and skill lottery results. Skips all
     └── autorun/
         ├── ArtianRerollTracker.lua
         └── ArtianRerollTracker/
+            ├── Font.lua
             ├── GrindingFilter.lua
             ├── Hooks.lua
             ├── LotteryFilter.lua
@@ -43,7 +48,8 @@ Track your Gogmazios Artian weapon grinding and skill lottery results. Skips all
 1. Open REFramework menu (default: `Insert` key)
 2. Find **Artian Reroll Tracker** → Check **Enable Tracker**
 3. Perform grinding or skill lottery as usual
-4. Uncheck to stop and save
+4. Use **Open Grinding Result** or **Open Lottery Result** to filter and compare results
+5. Uncheck to stop and save
 
 Data saved to: `reframework/data/reroll_sessions.json`
 
