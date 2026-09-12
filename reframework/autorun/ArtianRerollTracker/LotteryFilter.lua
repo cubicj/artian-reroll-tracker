@@ -137,54 +137,48 @@ function _M.register_ui()
             local wChanged, wIdx = imgui.combo("Weapon##lot", LW.weaponComboIdx, LW.weaponComboItems)
             if wChanged then
                 LW.weaponComboIdx = wIdx
-                if wIdx == 1 then
-                    LW.groupSelected = {}
-                    LW.seriesSelected = {}
-                end
                 LW.dirty = true
                 _M.collect_results()
             end
 
-            if LW.weaponComboIdx > 1 then
-                imgui.set_next_item_open(false, 2)
-                if imgui.tree_node("Group") then
-                    for idx, name in ipairs(LW.groupItems) do
-                        local active = LW.groupSelected[name] or false
-                        if active then imgui.push_style_color(21, 0xFF557744) end
-                        if imgui.button(name .. "##grp") then
-                            if active then
-                                LW.groupSelected[name] = nil
-                            else
-                                LW.groupSelected[name] = true
-                            end
-                            LW.dirty = true
-                            _M.collect_results()
+            imgui.set_next_item_open(false, 2)
+            if imgui.tree_node("Group") then
+                for idx, name in ipairs(LW.groupItems) do
+                    local active = LW.groupSelected[name] or false
+                    if active then imgui.push_style_color(21, 0xFF557744) end
+                    if imgui.button(name .. "##grp") then
+                        if active then
+                            LW.groupSelected[name] = nil
+                        else
+                            LW.groupSelected[name] = true
                         end
-                        if active then imgui.pop_style_color(1) end
-                        if idx % 4 ~= 0 and idx ~= #LW.groupItems then imgui.same_line() end
+                        LW.dirty = true
+                        _M.collect_results()
                     end
-                    imgui.tree_pop()
+                    if active then imgui.pop_style_color(1) end
+                    if idx % 4 ~= 0 and idx ~= #LW.groupItems then imgui.same_line() end
                 end
+                imgui.tree_pop()
+            end
 
-                imgui.set_next_item_open(false, 2)
-                if imgui.tree_node("Series") then
-                    for idx, name in ipairs(LW.seriesItems) do
-                        local active = LW.seriesSelected[name] or false
-                        if active then imgui.push_style_color(21, 0xFF557744) end
-                        if imgui.button(name .. "##ser") then
-                            if active then
-                                LW.seriesSelected[name] = nil
-                            else
-                                LW.seriesSelected[name] = true
-                            end
-                            LW.dirty = true
-                            _M.collect_results()
+            imgui.set_next_item_open(false, 2)
+            if imgui.tree_node("Series") then
+                for idx, name in ipairs(LW.seriesItems) do
+                    local active = LW.seriesSelected[name] or false
+                    if active then imgui.push_style_color(21, 0xFF557744) end
+                    if imgui.button(name .. "##ser") then
+                        if active then
+                            LW.seriesSelected[name] = nil
+                        else
+                            LW.seriesSelected[name] = true
                         end
-                        if active then imgui.pop_style_color(1) end
-                        if idx % 4 ~= 0 and idx ~= #LW.seriesItems then imgui.same_line() end
+                        LW.dirty = true
+                        _M.collect_results()
                     end
-                    imgui.tree_pop()
+                    if active then imgui.pop_style_color(1) end
+                    if idx % 4 ~= 0 and idx ~= #LW.seriesItems then imgui.same_line() end
                 end
+                imgui.tree_pop()
             end
 
             imgui.spacing()
