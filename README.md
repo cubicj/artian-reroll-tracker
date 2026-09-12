@@ -19,7 +19,7 @@ Track your Gogmazios Artian weapon grinding and skill lottery results. Skips all
 
 ## Requirements
 
-- [REFramework](https://www.nexusmods.com/monsterhunterwilds/mods/39)
+- [REFramework](https://www.nexusmods.com/monsterhunterwilds/mods/93)
 
 ## Installation
 
