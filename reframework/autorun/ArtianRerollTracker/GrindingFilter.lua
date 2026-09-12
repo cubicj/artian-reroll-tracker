@@ -1,12 +1,10 @@
-local Sdk, State
+local Sdk, State, Font
 local _M = {}
 
-local filterFont
-
-function _M.init(sdk, state, font)
+function _M.init(sdk, state, fontModule)
     Sdk = sdk
     State = state
-    filterFont = font
+    Font = fontModule
 end
 
 local function matches_filters(bonusNames, filters)
@@ -30,7 +28,7 @@ local function draw_filter_row(label, currentValue)
         if isSelected then
             imgui.push_style_color(21, 0xFF557744)
         end
-        if imgui.button(opt.label .. "##" .. label, Sdk.FILTER_BTN_SIZE) then
+        if imgui.button(opt.label .. "##" .. label, {Font.scaled(48), Font.scaled(26)}) then
             newValue = opt.value
         end
         if isSelected then
@@ -141,8 +139,13 @@ function _M.register_ui()
         local FW = State.FilterWindow
         if not FW.open then return end
 
+        local pushed = false
         local ok, err = pcall(function()
-            if filterFont then imgui.push_font(filterFont) end
+            local font = Font.current()
+            if font then
+                imgui.push_font(font)
+                pushed = true
+            end
 
             FW.open = imgui.begin_window("Artian Grinding Filter", FW.open, 0)
 
@@ -228,8 +231,8 @@ function _M.register_ui()
                 local endIdx = math.min(FW.currentPage * FW.pageSize, #displayResults)
 
                 if imgui.begin_table("FilterResults", 4, imgui.TableFlags.RowBg) then
-                    imgui.table_setup_column("", imgui.ColumnFlags.WidthFixed, 30)
-                    imgui.table_setup_column("#", imgui.ColumnFlags.WidthFixed, 40)
+                    imgui.table_setup_column("", imgui.ColumnFlags.WidthFixed, Font.scaled(30))
+                    imgui.table_setup_column("#", imgui.ColumnFlags.WidthFixed, Font.scaled(40))
                     imgui.table_setup_column("Weapon", imgui.ColumnFlags.WidthStretch, 2.0)
                     imgui.table_setup_column("Bonuses", imgui.ColumnFlags.WidthStretch, 5.0)
                     imgui.table_headers_row()
@@ -247,7 +250,7 @@ function _M.register_ui()
                         if checked then
                             imgui.push_style_color(21, 0xFF557744)
                         end
-                        if imgui.button(checked and "v" .. btnId or btnId, {20, 20}) then
+                        if imgui.button(checked and "v" .. btnId or btnId, {Font.scaled(20), Font.scaled(20)}) then
                             FW.selected[key] = not checked
                         end
                         if checked then
@@ -295,14 +298,17 @@ function _M.register_ui()
             end
 
             imgui.end_window()
-            if filterFont then imgui.pop_font() end
+            if pushed then
+                pushed = false
+                imgui.pop_font()
+            end
         end)
 
         if not ok then
             log.error(Sdk.TAG .. " [FilterUI] " .. tostring(err))
-            pcall(function()
-                if filterFont then imgui.pop_font() end
-            end)
+            if pushed then
+                pcall(imgui.pop_font)
+            end
             FW.open = false
         end
     end)

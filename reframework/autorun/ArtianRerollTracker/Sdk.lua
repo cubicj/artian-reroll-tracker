@@ -273,6 +273,4 @@ _M.FILTER_OPTIONS = {
     { label = "5",   value = 5 },
 }
 
-_M.FILTER_BTN_SIZE = {48, 26}
-
 return _M

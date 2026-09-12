@@ -15,6 +15,7 @@ local Hooks = try_require("ArtianRerollTracker.Hooks")
 local Ui = try_require("ArtianRerollTracker.Ui")
 local GrindingFilter = try_require("ArtianRerollTracker.GrindingFilter")
 local LotteryFilter = try_require("ArtianRerollTracker.LotteryFilter")
+local Font = try_require("ArtianRerollTracker.Font")
 
 if #load_errors > 0 then
     for _, err in ipairs(load_errors) do
@@ -32,16 +33,11 @@ if #load_errors > 0 then
     return
 end
 
-local FilterFont = nil
-if imgui.load_font then
-    pcall(function() FilterFont = imgui.load_font(nil, 18) end)
-end
-
 State.init(Sdk)
 Persistence.init(State)
 Hooks.init(Sdk, State)
-GrindingFilter.init(Sdk, State, FilterFont)
-LotteryFilter.init(Sdk, State, FilterFont)
+GrindingFilter.init(Sdk, State, Font)
+LotteryFilter.init(Sdk, State, Font)
 Ui.init(State)
 
 State.on_save = Persistence.save_to_json
